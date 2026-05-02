@@ -13,14 +13,21 @@ ADMIN_ID = 8118184388  # Замени на свой Telegram ID
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# Удаляем вебхук перед запуском (решение ошибки 409)
-bot.remove_webhook()
-time.sleep(1)  # Небольшая пауза для гарантии
+# Удаляем вебхук перед запуском
+try:
+    bot.remove_webhook()
+    print("✅ Вебхук удалён")
+except:
+    pass
+time.sleep(1)
 
 # Файлы для хранения данных
 USERS_FILE = "users.json"
 PRODUCTS_FILE = "products.json"
 PURCHASES_FILE = "purchases.json"
+
+# Словарь для хранения состояний пользователей
+user_states = {}
 
 # ========== ИНИЦИАЛИЗАЦИЯ БАЗ ДАННЫХ ==========
 def init_files():
@@ -143,13 +150,11 @@ def create_invoice(amount, user_id):
     data = {
         "asset": "USDT",
         "amount": str(amount),
-        "description": f"Пополнение баланса бота. User ID: {user_id}",
-        "paid_btn_name": "callback",
-        "paid_btn_url": f"https://t.me/{bot.get_me().username}"
+        "description": f"Пополнение баланса бота. User ID: {user_id}"
     }
     
     try:
-        response = requests.post(url, headers=headers, json=data)
+        response = requests.post(url, headers=headers, json=data, timeout=10)
         result = response.json()
         if result.get("ok"):
             return result["result"]["bot_invoice_url"]
@@ -185,28 +190,17 @@ def catalog_keyboard():
 
 def admin_keyboard():
     keyboard = InlineKeyboardMarkup(row_width=2)
-    btn1 = InlineKeyboardButton("📦 Управление товарами", callback_data="admin_products")
+    btn1 = InlineKeyboardButton("📦 Товары", callback_data="admin_products")
     btn2 = InlineKeyboardButton("👥 Пользователи", callback_data="admin_users")
     btn3 = InlineKeyboardButton("💰 Пополнения", callback_data="admin_deposits")
     btn4 = InlineKeyboardButton("📢 Рассылка", callback_data="admin_mailing")
     btn5 = InlineKeyboardButton("📊 Статистика", callback_data="admin_stats")
-    btn6 = InlineKeyboardButton("⚠️ Бан пользователя", callback_data="admin_ban")
-    btn_exit = InlineKeyboardButton("🔙 Выход из админки", callback_data="back_to_menu")
-    keyboard.add(btn1, btn2, btn3, btn4, btn5, btn6)
+    btn_exit = InlineKeyboardButton("🔙 Выход", callback_data="back_to_menu")
+    keyboard.add(btn1, btn2, btn3, btn4, btn5)
     keyboard.add(btn_exit)
     return keyboard
 
-def admin_products_keyboard():
-    keyboard = InlineKeyboardMarkup(row_width=1)
-    btn1 = InlineKeyboardButton("➕ Добавить товар", callback_data="add_product")
-    btn2 = InlineKeyboardButton("✏️ Изменить товар", callback_data="edit_product")
-    btn3 = InlineKeyboardButton("❌ Удалить товар", callback_data="delete_product")
-    btn_back = InlineKeyboardButton("◀️ Назад", callback_data="admin_panel")
-    keyboard.add(btn1, btn2, btn3, btn_back)
-    return keyboard
-
-# ========== ФУНКЦИИ ДЛЯ ТЕКСТА ==========
-def generate_profile_text(user_id, username=None):
+def get_profile_text(user_id, username=None):
     users = load_users()
     user_data = users.get(str(user_id), {})
     balance = user_data.get("balance", 0)
@@ -226,6 +220,31 @@ def generate_profile_text(user_id, username=None):
     text += f"5 — Баланс"
     return text
 
+# ========== ОТПРАВКА СООБЩЕНИЙ ==========
+def send_main_menu(message):
+    user_id = message.from_user.id
+    username = message.from_user.username
+    
+    text = get_profile_text(user_id, username)
+    
+    # Пытаемся отправить с фото, если есть
+    try:
+        if os.path.exists('welcome.jpg'):
+            with open('welcome.jpg', 'rb') as photo:
+                bot.send_photo(user_id, photo, caption=text, reply_markup=main_menu_keyboard(user_id))
+        else:
+            bot.send_message(user_id, text, reply_markup=main_menu_keyboard(user_id))
+    except Exception as e:
+        bot.send_message(user_id, text, reply_markup=main_menu_keyboard(user_id))
+
+def edit_message(chat_id, message_id, text, reply_markup=None):
+    """Безопасное редактирование сообщения"""
+    try:
+        bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=reply_markup)
+    except Exception as e:
+        # Если не можем отредактировать, отправляем новое
+        bot.send_message(chat_id, text, reply_markup=reply_markup)
+
 # ========== ОБРАБОТЧИКИ КОМАНД ==========
 @bot.message_handler(commands=['start'])
 def start_command(message):
@@ -240,26 +259,21 @@ def start_command(message):
             users = load_users()
             if referrer_id in users and str(user_id) not in users[referrer_id].get("referrals", []):
                 add_referral(user_id, referrer_id)
+                bot.send_message(user_id, f"✅ Вы были приглашены пользователем! При покупке он получит бонус.")
     
-    # Отправка приветствия
-    try:
-        with open('welcome.jpg', 'rb') as photo:
-            bot.send_photo(user_id, photo, caption=generate_profile_text(user_id, username), 
-                          reply_markup=main_menu_keyboard(user_id))
-    except:
-        bot.send_message(user_id, generate_profile_text(user_id, username), 
-                        reply_markup=main_menu_keyboard(user_id))
+    send_main_menu(message)
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
     user_id = call.from_user.id
     username = call.from_user.username
+    message_id = call.message.message_id
+    chat_id = call.message.chat.id
     
     # Главное меню
     if call.data == "back_to_menu":
-        bot.edit_message_caption(chat_id=user_id, message_id=call.message.message_id,
-                               caption=generate_profile_text(user_id, username),
-                               reply_markup=main_menu_keyboard(user_id))
+        text = get_profile_text(user_id, username)
+        edit_message(chat_id, message_id, text, main_menu_keyboard(user_id))
         bot.answer_callback_query(call.id)
     
     elif call.data == "catalog":
@@ -270,8 +284,7 @@ def callback_handler(call):
             text += f"   └ {product['description']}\n\n"
         text += "━━━━━━━━━━━━━━━\n\n"
         text += "Нажмите на кнопку ниже:"
-        bot.edit_message_caption(chat_id=user_id, message_id=call.message.message_id,
-                               caption=text, reply_markup=catalog_keyboard())
+        edit_message(chat_id, message_id, text, catalog_keyboard())
         bot.answer_callback_query(call.id)
     
     elif call.data == "referral":
@@ -299,8 +312,7 @@ def callback_handler(call):
         btn_back = InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_menu")
         keyboard.add(btn_copy, btn_list, btn_back)
         
-        bot.edit_message_caption(chat_id=user_id, message_id=call.message.message_id,
-                               caption=text, reply_markup=keyboard)
+        edit_message(chat_id, message_id, text, keyboard)
         bot.answer_callback_query(call.id)
     
     elif call.data == "my_referrals":
@@ -327,7 +339,10 @@ def callback_handler(call):
                 total_spent = sum(p.get("amount", 0) for p in user_purchases)
                 bonus = total_spent * 0.1
                 total_earned += bonus
-                text += f"{i}. ID:{ref_id} — куплено: {len(user_purchases)} акков | {total_spent}$ → ваш бонус: {bonus}$\n"
+                # Получаем username реферала
+                ref_user = users.get(str(ref_id), {})
+                ref_name = ref_user.get("username", f"ID{ref_id}")
+                text += f"{i}. @{ref_name} — куплено: {len(user_purchases)} акков | {total_spent}$ → бонус: {bonus}$\n"
             
             text += "\n━━━━━━━━━━━━━━━\n"
             text += f"👥 Всего: {len(referrals)} рефералов\n"
@@ -338,57 +353,45 @@ def callback_handler(call):
             btn_back = InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_menu")
             keyboard.add(btn_copy, btn_back)
         
-        bot.edit_message_caption(chat_id=user_id, message_id=call.message.message_id,
-                               caption=text, reply_markup=keyboard)
+        edit_message(chat_id, message_id, text, keyboard)
         bot.answer_callback_query(call.id)
     
     elif call.data == "copy_ref_link":
         bot_username = bot.get_me().username
         ref_link = f"https://t.me/{bot_username}?start={user_id}"
-        bot.answer_callback_query(call.id, f"Ссылка: {ref_link}", show_alert=True)
+        bot.answer_callback_query(call.id, f"Ваша ссылка: {ref_link}", show_alert=True)
     
     elif call.data == "support":
         text = "🆘 ПОДДЕРЖКА\n\nСвяжитесь с нами: @support_username"
         keyboard = InlineKeyboardMarkup()
         btn_back = InlineKeyboardButton("◀️ Назад", callback_data="back_to_menu")
         keyboard.add(btn_back)
-        bot.edit_message_caption(chat_id=user_id, message_id=call.message.message_id,
-                               caption=text, reply_markup=keyboard)
+        edit_message(chat_id, message_id, text, keyboard)
         bot.answer_callback_query(call.id)
     
     elif call.data == "terms":
         text = """📜 ПРАВИЛА И ОФЕРТА
 
 1️⃣ Токены НЕ хранятся заранее
-Токены и данные берутся ТОЛЬКО в момент покупки (под выдачу).
-После выдачи данные удаляются. Сохраните их сразу.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 2️⃣ Запрещено использовать аккаунты для мошенничества
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
 3️⃣ За нарушение правил аккаунт могут заблокировать
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 4️⃣ Замена авторегов в течение 5 часов
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
 5️⃣ Возврат денег НЕ предусмотрен
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+6️⃣ Ответственность на покупателе
 
-Продолжая использовать бота, вы автоматически соглашаетесь со всеми правилами."""
+7️⃣ Продолжая использовать бота, вы соглашаетесь с правилами"""
         
         keyboard = InlineKeyboardMarkup(row_width=2)
         btn_back = InlineKeyboardButton("◀️ Назад", callback_data="back_to_menu")
         btn_agree = InlineKeyboardButton("✅ Согласен", callback_data="back_to_menu")
         keyboard.add(btn_agree, btn_back)
-        bot.edit_message_caption(chat_id=user_id, message_id=call.message.message_id,
-                               caption=text, reply_markup=keyboard)
+        
+        edit_message(chat_id, message_id, text, keyboard)
         bot.answer_callback_query(call.id)
     
     elif call.data == "balance":
@@ -402,8 +405,7 @@ def callback_handler(call):
         btn_back = InlineKeyboardButton("◀️ Назад", callback_data="back_to_menu")
         keyboard.add(btn_back)
         
-        bot.edit_message_caption(chat_id=user_id, message_id=call.message.message_id,
-                               caption=text, reply_markup=keyboard)
+        edit_message(chat_id, message_id, text, keyboard)
         bot.answer_callback_query(call.id)
     
     # Покупка товаров
@@ -429,24 +431,23 @@ def callback_handler(call):
         btn_back = InlineKeyboardButton("◀️ В каталог", callback_data="catalog")
         keyboard.add(btn_back)
         
-        bot.edit_message_caption(chat_id=user_id, message_id=call.message.message_id,
-                               caption=text, reply_markup=keyboard)
+        edit_message(chat_id, message_id, text, keyboard)
         bot.answer_callback_query(call.id)
         
-        # Сохраняем состояние для следующего шага
-        bot.register_next_step_handler(call.message, process_amount, product_key, product)
+        # Сохраняем состояние
+        user_states[user_id] = {"product_key": product_key, "product": product}
     
     # Пополнение баланса
     elif call.data.startswith("deposit_"):
         if call.data == "deposit_custom":
             text = "💰 ПОПОЛНЕНИЕ БАЛАНСА\n\nВведите сумму от 5$ до 5000$:"
-            bot.edit_message_caption(chat_id=user_id, message_id=call.message.message_id,
-                                   caption=text, reply_markup=None)
-            bot.register_next_step_handler(call.message, process_custom_deposit)
+            edit_message(chat_id, message_id, text, None)
+            bot.answer_callback_query(call.id)
+            user_states[user_id] = {"awaiting_custom_deposit": True}
         else:
             amount = float(call.data.split("_")[1])
-            process_payment(call.message, user_id, amount, call.message.message_id)
-        bot.answer_callback_query(call.id)
+            process_payment(call.message.chat.id, user_id, amount)
+            bot.answer_callback_query(call.id)
     
     # Админ панель
     elif call.data == "admin_panel":
@@ -456,21 +457,18 @@ def callback_handler(call):
         
         text = "👑 АДМИН ПАНЕЛЬ | MAX\n\nВыберите раздел:\n\n"
         text += "━━━━━━━━━━━━━━━\n\n"
-        text += "1 — 📦 Товары (добавить/удалить/изменить)\n"
-        text += "2 — 👥 Пользователи (просмотр/баланс/выдача)\n"
-        text += "3 — 💰 Пополнения (ручное зачисление)\n"
-        text += "5 — 📢 Рассылка\n"
-        text += "6 — 📊 Статистика\n"
-        text += "7 — ⚙️ бан\n\n"
-        text += "━━━━━━━━━━━━━━━"
+        text += "📦 Товары - управление\n"
+        text += "👥 Пользователи - просмотр\n"
+        text += "💰 Пополнения - выдача\n"
+        text += "📢 Рассылка - сообщения\n"
+        text += "📊 Статистика - отчёт"
         
-        bot.edit_message_caption(chat_id=user_id, message_id=call.message.message_id,
-                               caption=text, reply_markup=admin_keyboard())
+        edit_message(chat_id, message_id, text, admin_keyboard())
         bot.answer_callback_query(call.id)
     
     elif call.data == "admin_products":
-        bot.edit_message_caption(chat_id=user_id, message_id=call.message.message_id,
-                               caption="📦 Управление товарами", reply_markup=admin_products_keyboard())
+        text = "📦 Управление товарами\n\nЗдесь можно добавлять/редактировать товары"
+        edit_message(chat_id, message_id, text, admin_products_keyboard())
         bot.answer_callback_query(call.id)
     
     elif call.data == "admin_stats":
@@ -489,19 +487,49 @@ def callback_handler(call):
         btn_back = InlineKeyboardButton("◀️ Назад", callback_data="admin_panel")
         keyboard.add(btn_back)
         
-        bot.edit_message_caption(chat_id=user_id, message_id=call.message.message_id,
-                               caption=text, reply_markup=keyboard)
+        edit_message(chat_id, message_id, text, keyboard)
         bot.answer_callback_query(call.id)
+
+def admin_products_keyboard():
+    keyboard = InlineKeyboardMarkup(row_width=1)
+    btn1 = InlineKeyboardButton("➕ Добавить товар", callback_data="add_product")
+    btn2 = InlineKeyboardButton("✏️ Изменить товар", callback_data="edit_product")
+    btn3 = InlineKeyboardButton("❌ Удалить товар", callback_data="delete_product")
+    btn_back = InlineKeyboardButton("◀️ Назад", callback_data="admin_panel")
+    keyboard.add(btn1, btn2, btn3, btn_back)
+    return keyboard
+
+# ========== ОБРАБОТКА СООБЩЕНИЙ ==========
+@bot.message_handler(func=lambda message: True)
+def handle_message(message):
+    user_id = message.from_user.id
+    
+    # Проверяем, ждём ли мы количество для покупки
+    if user_id in user_states and "product_key" in user_states[user_id]:
+        state = user_states.pop(user_id)
+        product_key = state["product_key"]
+        product = state["product"]
+        process_amount(message, product_key, product)
+        return
+    
+    # Проверяем, ждём ли мы сумму для пополнения
+    if user_id in user_states and user_states[user_id].get("awaiting_custom_deposit"):
+        user_states.pop(user_id)
+        process_custom_deposit(message)
+        return
+    
+    # Если ничего не ждём, отправляем в главное меню
+    send_main_menu(message)
 
 def process_amount(message, product_key, product):
     user_id = message.from_user.id
     
     try:
         quantity = int(message.text.strip())
-        if quantity <= 0:
+        if quantity <= 0 or quantity > 100:
             raise ValueError
     except:
-        bot.send_message(user_id, "❌ Введите корректное число (от 1 до 10)")
+        bot.send_message(user_id, "❌ Введите корректное число (от 1 до 100)")
         return
     
     if quantity > product["stock"]:
@@ -526,8 +554,11 @@ def process_amount(message, product_key, product):
         bot.send_message(user_id, text, reply_markup=keyboard)
         return
     
-    # Выдача товара (заглушка)
-    fake_data = f"Токен_{product['name']}_{quantity}_{int(time.time())}"
+    # Генерация данных (в реальном проекте здесь API для получения токенов)
+    data_list = []
+    for i in range(quantity):
+        fake_data = f"{product['name']}_TOKEN_{user_id}_{int(time.time())}_{i+1}"
+        data_list.append(fake_data)
     
     # Списываем баланс
     deduct_balance(user_id, total_price)
@@ -539,18 +570,21 @@ def process_amount(message, product_key, product):
     if referrer_id:
         bonus = total_price * 0.1
         add_referral_earning(referrer_id, bonus)
+        bot.send_message(referrer_id, f"🎉 Ваш реферал совершил покупку!\n➕ Получено: {bonus}$")
     
     # Обновляем статистику покупок
     purchases = load_purchases()
     if str(user_id) not in purchases:
         purchases[str(user_id)] = []
-    purchases[str(user_id)].append({
-        "product": product["name"],
-        "quantity": quantity,
-        "amount": total_price,
-        "data": fake_data,
-        "time": str(datetime.now())
-    })
+    
+    for data in data_list:
+        purchases[str(user_id)].append({
+            "product": product["name"],
+            "quantity": 1,
+            "amount": product["price"],
+            "data": data,
+            "time": str(datetime.now())
+        })
     save_purchases(purchases)
     
     # Обновляем количество купленных аккаунтов
@@ -567,16 +601,21 @@ def process_amount(message, product_key, product):
     text += f"Товар: {product['emoji']} {product['name']}\n"
     text += f"Количество: {quantity} шт\n"
     text += f"Сумма: {total_price}$\n\n"
-    text += f"Ваши данные:\n{fake_data}\n\n"
+    text += f"━━━━━━━━━━━━━━━\n\n"
+    text += f"📦 Ваши данные:\n"
+    
+    for i, data in enumerate(data_list, 1):
+        text += f"{i}. {data}\n"
+    
+    text += f"\n━━━━━━━━━━━━━━━\n\n"
     text += "⚠️ Сохраните данные! Они не хранятся на сервере."
     
     bot.send_message(user_id, text)
     
     # Возвращаем в главное меню
-    bot.send_message(user_id, generate_profile_text(user_id, message.from_user.username),
-                    reply_markup=main_menu_keyboard(user_id))
+    send_main_menu(message)
 
-def process_payment(message, user_id, amount, edit_message_id=None):
+def process_payment(chat_id, user_id, amount):
     invoice_url = create_invoice(amount, user_id)
     
     if not invoice_url:
@@ -586,21 +625,14 @@ def process_payment(message, user_id, amount, edit_message_id=None):
     text = f"💰 ПОПОЛНЕНИЕ БАЛАНСА\n\n"
     text += f"Сумма: {amount}$\n"
     text += f"Оплатите по ссылке:\n{invoice_url}\n\n"
-    text += "После оплаты нажмите кнопку ниже"
+    text += "После оплаты напишите /start и нажмите 'Проверить оплату'"
     
     keyboard = InlineKeyboardMarkup()
     btn_check = InlineKeyboardButton("✅ Проверить оплату", callback_data=f"check_payment_{amount}")
     btn_back = InlineKeyboardButton("◀️ Назад", callback_data="balance")
     keyboard.add(btn_check, btn_back)
     
-    if edit_message_id:
-        try:
-            bot.edit_message_caption(chat_id=user_id, message_id=edit_message_id,
-                                   caption=text, reply_markup=keyboard)
-        except:
-            bot.send_message(user_id, text, reply_markup=keyboard)
-    else:
-        bot.send_message(user_id, text, reply_markup=keyboard)
+    bot.send_message(user_id, text, reply_markup=keyboard)
 
 def process_custom_deposit(message):
     user_id = message.from_user.id
@@ -613,37 +645,47 @@ def process_custom_deposit(message):
         bot.send_message(user_id, "❌ Введите сумму от 5$ до 5000$")
         return
     
-    process_payment(message, user_id, amount)
+    process_payment(message.chat.id, user_id, amount)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("check_payment_"))
 def check_payment_callback(call):
     user_id = call.from_user.id
     amount = float(call.data.split("_")[2])
     
-    # Для демонстрации просто зачисляем
+    # Добавляем баланс (в реальном проекте проверяем платеж через API)
     add_balance(user_id, amount)
     
     text = f"✅ Баланс пополнен на {amount}$!\n\nТекущий баланс: {get_user_balance(user_id)}$"
     
     try:
-        bot.edit_message_caption(chat_id=user_id, message_id=call.message.message_id,
-                               caption=text, reply_markup=None)
+        bot.edit_message_text(text, chat_id=user_id, message_id=call.message.message_id, reply_markup=None)
     except:
-        bot.edit_message_text(text, chat_id=user_id, message_id=call.message.message_id)
+        bot.send_message(user_id, text)
     
-    bot.send_message(user_id, generate_profile_text(user_id, call.from_user.username),
-                    reply_markup=main_menu_keyboard(user_id))
-    bot.answer_callback_query(call.id)
+    # Отправляем главное меню
+    fake_message = type('obj', (object,), {'from_user': call.from_user, 'chat': call.message.chat})()
+    send_main_menu(fake_message)
+    
+    bot.answer_callback_query(call.id, "Баланс пополнен!", show_alert=True)
 
 # ========== ЗАПУСК БОТА ==========
 if __name__ == "__main__":
     init_files()
-    print("🤖 Бот запущен...")
-    print("✅ Вебхук удалён, используется Long Polling")
+    print("=" * 50)
+    print("🤖 БОТ ЗАПУЩЕН")
+    print("=" * 50)
+    print(f"✅ Токен бота: {BOT_TOKEN[:10]}...")
+    print(f"👑 ID админа: {ADMIN_ID}")
+    print(f"📁 Файлы: {USERS_FILE}, {PRODUCTS_FILE}, {PURCHASES_FILE}")
+    print("=" * 50)
+    print("🟢 Бот готов к работе!")
     
     while True:
         try:
             bot.polling(none_stop=True, interval=1, timeout=60)
+        except KeyboardInterrupt:
+            print("\n🔴 Бот остановлен")
+            break
         except Exception as e:
-            print(f"Ошибка: {e}")
+            print(f"❌ Ошибка: {e}")
             time.sleep(5)
