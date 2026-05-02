@@ -101,6 +101,7 @@ def register_user(user_id, username=None):
             "referrer_id": None,
             "referrals": [],
             "referral_earnings": 0.0,
+            "is_banned": False,
             "registered_at": str(datetime.now())
         }
         save_users(users)
@@ -195,9 +196,34 @@ def admin_keyboard():
     btn3 = InlineKeyboardButton("💰 Пополнения", callback_data="admin_deposits")
     btn4 = InlineKeyboardButton("📢 Рассылка", callback_data="admin_mailing")
     btn5 = InlineKeyboardButton("📊 Статистика", callback_data="admin_stats")
+    btn6 = InlineKeyboardButton("⚠️ Бан пользователя", callback_data="admin_ban")
     btn_exit = InlineKeyboardButton("🔙 Выход", callback_data="back_to_menu")
-    keyboard.add(btn1, btn2, btn3, btn4, btn5)
+    keyboard.add(btn1, btn2, btn3, btn4, btn5, btn6)
     keyboard.add(btn_exit)
+    return keyboard
+
+def admin_products_keyboard():
+    keyboard = InlineKeyboardMarkup(row_width=1)
+    btn1 = InlineKeyboardButton("➕ Добавить товар", callback_data="add_product")
+    btn2 = InlineKeyboardButton("✏️ Изменить товар", callback_data="edit_product")
+    btn3 = InlineKeyboardButton("❌ Удалить товар", callback_data="delete_product")
+    btn_back = InlineKeyboardButton("◀️ Назад", callback_data="admin_panel")
+    keyboard.add(btn1, btn2, btn3, btn_back)
+    return keyboard
+
+def admin_users_keyboard():
+    keyboard = InlineKeyboardMarkup(row_width=1)
+    btn_list = InlineKeyboardButton("📋 Список пользователей", callback_data="admin_user_list")
+    btn_find = InlineKeyboardButton("🔍 Найти пользователя", callback_data="admin_find_user")
+    btn_back = InlineKeyboardButton("◀️ Назад", callback_data="admin_panel")
+    keyboard.add(btn_list, btn_find, btn_back)
+    return keyboard
+
+def admin_deposits_keyboard():
+    keyboard = InlineKeyboardMarkup(row_width=1)
+    btn_manual = InlineKeyboardButton("💰 Ручное зачисление", callback_data="admin_manual_deposit")
+    btn_back = InlineKeyboardButton("◀️ Назад", callback_data="admin_panel")
+    keyboard.add(btn_manual, btn_back)
     return keyboard
 
 def get_profile_text(user_id, username=None):
@@ -227,7 +253,6 @@ def send_main_menu(message):
     
     text = get_profile_text(user_id, username)
     
-    # Пытаемся отправить с фото, если есть
     try:
         if os.path.exists('welcome.jpg'):
             with open('welcome.jpg', 'rb') as photo:
@@ -238,12 +263,13 @@ def send_main_menu(message):
         bot.send_message(user_id, text, reply_markup=main_menu_keyboard(user_id))
 
 def edit_message(chat_id, message_id, text, reply_markup=None):
-    """Безопасное редактирование сообщения"""
     try:
         bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=reply_markup)
-    except Exception as e:
-        # Если не можем отредактировать, отправляем новое
-        bot.send_message(chat_id, text, reply_markup=reply_markup)
+    except:
+        try:
+            bot.send_message(chat_id, text, reply_markup=reply_markup)
+        except:
+            pass
 
 # ========== ОБРАБОТЧИКИ КОМАНД ==========
 @bot.message_handler(commands=['start'])
@@ -252,11 +278,14 @@ def start_command(message):
     username = message.from_user.username
     register_user(user_id, username)
     
-    # Обработка реферальной ссылки
+    users = load_users()
+    if users.get(str(user_id), {}).get("is_banned", False):
+        bot.send_message(user_id, "⛔ Вы заблокированы в этом боте!")
+        return
+    
     if len(message.text.split()) > 1:
         referrer_id = message.text.split()[1]
         if referrer_id.isdigit() and int(referrer_id) != user_id:
-            users = load_users()
             if referrer_id in users and str(user_id) not in users[referrer_id].get("referrals", []):
                 add_referral(user_id, referrer_id)
                 bot.send_message(user_id, f"✅ Вы были приглашены пользователем! При покупке он получит бонус.")
@@ -270,7 +299,12 @@ def callback_handler(call):
     message_id = call.message.message_id
     chat_id = call.message.chat.id
     
-    # Главное меню
+    users = load_users()
+    if users.get(str(user_id), {}).get("is_banned", False) and call.data not in ["back_to_menu"]:
+        bot.answer_callback_query(call.id, "⛔ Вы заблокированы!", show_alert=True)
+        return
+    
+    # ========== ГЛАВНОЕ МЕНЮ ==========
     if call.data == "back_to_menu":
         text = get_profile_text(user_id, username)
         edit_message(chat_id, message_id, text, main_menu_keyboard(user_id))
@@ -288,8 +322,8 @@ def callback_handler(call):
         bot.answer_callback_query(call.id)
     
     elif call.data == "referral":
-        users = load_users()
-        user_data = users.get(str(user_id), {})
+        users_data = load_users()
+        user_data = users_data.get(str(user_id), {})
         bot_username = bot.get_me().username
         ref_link = f"https://t.me/{bot_username}?start={user_id}"
         
@@ -316,8 +350,8 @@ def callback_handler(call):
         bot.answer_callback_query(call.id)
     
     elif call.data == "my_referrals":
-        users = load_users()
-        user_data = users.get(str(user_id), {})
+        users_data = load_users()
+        user_data = users_data.get(str(user_id), {})
         referrals = user_data.get("referrals", [])
         
         if not referrals:
@@ -339,8 +373,7 @@ def callback_handler(call):
                 total_spent = sum(p.get("amount", 0) for p in user_purchases)
                 bonus = total_spent * 0.1
                 total_earned += bonus
-                # Получаем username реферала
-                ref_user = users.get(str(ref_id), {})
+                ref_user = users_data.get(str(ref_id), {})
                 ref_name = ref_user.get("username", f"ID{ref_id}")
                 text += f"{i}. @{ref_name} — куплено: {len(user_purchases)} акков | {total_spent}$ → бонус: {bonus}$\n"
             
@@ -374,17 +407,120 @@ def callback_handler(call):
 
 1️⃣ Токены НЕ хранятся заранее
 
+Токены и данные берутся ТОЛЬКО в момент покупки (под выдачу).
+После выдачи данные удаляются. Сохраните их сразу.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 2️⃣ Запрещено использовать аккаунты для мошенничества
+
+• Не использовать для обмана людей
+• Не использовать для фишинга
+• Не использовать для спама
+• Не нарушать законы РФ и вашей страны
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 3️⃣ За нарушение правил аккаунт могут заблокировать
 
+• Мошенничество → блокировка сразу (навсегда)
+• Спам / фишинг → предупреждение, затем блокировка
+• При блокировке деньги не возвращаются
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 4️⃣ Замена авторегов в течение 5 часов
 
-5️⃣ Возврат денег НЕ предусмотрен
+Если авторег оказался не валидным (нерабочим) — замена в течение 5 часов с момента покупки.
 
-6️⃣ Ответственность на покупателе
+Для замены нужно отправить скриншот ошибки в поддержку.
 
-7️⃣ Продолжая использовать бота, вы соглашаетесь с правилами"""
+Другие типы товаров (Web Token, JSON) замене не подлежат, если они были рабочими в момент выдачи.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+5️⃣ Возврат денег
+
+Возврат денег НЕ предусмотрен. Все товары — цифровые.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+6️⃣ Ответственность
+
+Мы НЕ несём ответственность за:
+• Блокировку аккаунтов после покупки (ваши действия)
+• Потерю данных пользователем
+• Действия, совершённые с купленными аккаунтами
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+7️⃣ Изменение правил
+
+Правила могут меняться. Актуальная версия всегда здесь.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+8️⃣ Конфиденциальность
+
+• Мы не передаём ваши данные (ID, username, история покупок) третьим лицам
+• Данные о покупках хранятся только для решения спорных ситуаций
+• Чат с поддержкой — конфиденциален
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+9️⃣ Один аккаунт бота — один человек
+
+• Запрещено использовать несколько Telegram-аккаунтов для одного пользователя
+• Запрещено создавать мультиаккаунты для получения реферальных бонусов
+• За нарушение — блокировка всех аккаунтов
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔟 Минимальный возраст
+
+Использование бота разрешено только лицам от 18 лет.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1️⃣1️⃣ Запрет на перепродажу
+
+• Запрещено перепродавать купленные аккаунты третьим лицам
+• Аккаунты предоставлены для личного использования
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1️⃣2️⃣ Техническая поддержка
+
+• Время ответа поддержки: до 12 часов
+• По выходным — до 24 часов
+• Не нужно писать несколько раз подряд — это замедляет ответ
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1️⃣3️⃣ Сохраняйте данные сразу
+
+Мы НЕ храним токены и пароли после выдачи.
+Восстановить потерянные данные НЕВОЗМОЖНО.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1️⃣4️⃣ Запрещённые действия в боте
+
+Запрещено:
+• Спамить командами (флуд)
+• Отправлять запрещённый контент
+• Оскорблять бота или поддержку
+• Пытаться взломать или обмануть систему
+
+За нарушение — блокировка без предупреждения.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1️⃣5️⃣ Согласие с правилами
+
+Продолжая использовать бота, вы автоматически соглашаетесь со всеми текущими и будущими изменениями правил.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"""
         
         keyboard = InlineKeyboardMarkup(row_width=2)
         btn_back = InlineKeyboardButton("◀️ Назад", callback_data="back_to_menu")
@@ -408,7 +544,7 @@ def callback_handler(call):
         edit_message(chat_id, message_id, text, keyboard)
         bot.answer_callback_query(call.id)
     
-    # Покупка товаров
+    # ========== ПОКУПКА ТОВАРОВ ==========
     elif call.data.startswith("buy_"):
         product_key = call.data.replace("buy_", "")
         products = load_products()
@@ -434,10 +570,9 @@ def callback_handler(call):
         edit_message(chat_id, message_id, text, keyboard)
         bot.answer_callback_query(call.id)
         
-        # Сохраняем состояние
         user_states[user_id] = {"product_key": product_key, "product": product}
     
-    # Пополнение баланса
+    # ========== ПОПОЛНЕНИЕ БАЛАНСА ==========
     elif call.data.startswith("deposit_"):
         if call.data == "deposit_custom":
             text = "💰 ПОПОЛНЕНИЕ БАЛАНСА\n\nВведите сумму от 5$ до 5000$:"
@@ -449,7 +584,7 @@ def callback_handler(call):
             process_payment(call.message.chat.id, user_id, amount)
             bot.answer_callback_query(call.id)
     
-    # Админ панель
+    # ========== АДМИН ПАНЕЛЬ ==========
     elif call.data == "admin_panel":
         if str(user_id) != str(ADMIN_ID):
             bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
@@ -457,31 +592,205 @@ def callback_handler(call):
         
         text = "👑 АДМИН ПАНЕЛЬ | MAX\n\nВыберите раздел:\n\n"
         text += "━━━━━━━━━━━━━━━\n\n"
-        text += "📦 Товары - управление\n"
-        text += "👥 Пользователи - просмотр\n"
-        text += "💰 Пополнения - выдача\n"
-        text += "📢 Рассылка - сообщения\n"
-        text += "📊 Статистика - отчёт"
+        text += "1 — 📦 Товары (добавить/удалить/изменить)\n"
+        text += "2 — 👥 Пользователи (просмотр/баланс/выдача)\n"
+        text += "3 — 💰 Пополнения (ручное зачисление)\n"
+        text += "5 — 📢 Рассылка\n"
+        text += "6 — 📊 Статистика\n"
+        text += "7 — ⚙️ бан\n\n"
+        text += "━━━━━━━━━━━━━━━"
         
         edit_message(chat_id, message_id, text, admin_keyboard())
         bot.answer_callback_query(call.id)
     
+    # ========== УПРАВЛЕНИЕ ТОВАРАМИ ==========
     elif call.data == "admin_products":
-        text = "📦 Управление товарами\n\nЗдесь можно добавлять/редактировать товары"
+        if str(user_id) != str(ADMIN_ID):
+            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
+            return
+        
+        text = "📦 УПРАВЛЕНИЕ ТОВАРАМИ\n\nВыберите действие:"
         edit_message(chat_id, message_id, text, admin_products_keyboard())
         bot.answer_callback_query(call.id)
     
+    elif call.data == "add_product":
+        if str(user_id) != str(ADMIN_ID):
+            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
+            return
+        
+        text = "➕ ДОБАВЛЕНИЕ ТОВАРА\n\nВведите данные в формате:\n`id|название|цена|количество|эмодзи|описание`\n\nПример:\n`new_token|Новый Токен|5|10|⭐|Описание товара`"
+        bot.send_message(user_id, text, parse_mode="Markdown")
+        user_states[user_id] = {"awaiting_add_product": True}
+        bot.answer_callback_query(call.id)
+    
+    elif call.data == "edit_product":
+        if str(user_id) != str(ADMIN_ID):
+            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
+            return
+        
+        products = load_products()
+        text = "✏️ ИЗМЕНЕНИЕ ТОВАРА\n\nВыберите товар для изменения:\n\n"
+        
+        keyboard = InlineKeyboardMarkup(row_width=1)
+        for key, product in products.items():
+            text += f"{product['emoji']} {product['name']} (ID: {key})\n"
+            keyboard.add(InlineKeyboardButton(f"{product['emoji']} {product['name']}", callback_data=f"edit_select_{key}"))
+        
+        btn_back = InlineKeyboardButton("◀️ Назад", callback_data="admin_products")
+        keyboard.add(btn_back)
+        
+        edit_message(chat_id, message_id, text, keyboard)
+        bot.answer_callback_query(call.id)
+    
+    elif call.data.startswith("edit_select_"):
+        if str(user_id) != str(ADMIN_ID):
+            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
+            return
+        
+        product_key = call.data.replace("edit_select_", "")
+        user_states[user_id] = {"awaiting_edit_product": product_key}
+        
+        text = f"✏️ РЕДАКТИРОВАНИЕ ТОВАРА\n\nВведите новые данные в формате:\n`название|цена|количество|эмодзи|описание`\n\nПример:\n`Новый Токен|5|10|⭐|Новое описание`"
+        bot.send_message(user_id, text, parse_mode="Markdown")
+        bot.answer_callback_query(call.id)
+    
+    elif call.data == "delete_product":
+        if str(user_id) != str(ADMIN_ID):
+            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
+            return
+        
+        products = load_products()
+        text = "❌ УДАЛЕНИЕ ТОВАРА\n\nВыберите товар для удаления:\n\n"
+        
+        keyboard = InlineKeyboardMarkup(row_width=1)
+        for key, product in products.items():
+            text += f"{product['emoji']} {product['name']} (ID: {key})\n"
+            keyboard.add(InlineKeyboardButton(f"{product['emoji']} {product['name']}", callback_data=f"delete_select_{key}"))
+        
+        btn_back = InlineKeyboardButton("◀️ Назад", callback_data="admin_products")
+        keyboard.add(btn_back)
+        
+        edit_message(chat_id, message_id, text, keyboard)
+        bot.answer_callback_query(call.id)
+    
+    elif call.data.startswith("delete_select_"):
+        if str(user_id) != str(ADMIN_ID):
+            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
+            return
+        
+        product_key = call.data.replace("delete_select_", "")
+        products = load_products()
+        
+        if product_key in products:
+            del products[product_key]
+            save_products(products)
+            bot.send_message(user_id, f"✅ Товар успешно удалён!")
+        else:
+            bot.send_message(user_id, f"❌ Товар не найден!")
+        
+        bot.answer_callback_query(call.id)
+        
+        text = "📦 УПРАВЛЕНИЕ ТОВАРАМИ\n\nВыберите действие:"
+        edit_message(chat_id, message_id, text, admin_products_keyboard())
+    
+    # ========== ПОЛЬЗОВАТЕЛИ ==========
+    elif call.data == "admin_users":
+        if str(user_id) != str(ADMIN_ID):
+            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
+            return
+        
+        text = "👥 УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ\n\nВыберите действие:"
+        edit_message(chat_id, message_id, text, admin_users_keyboard())
+        bot.answer_callback_query(call.id)
+    
+    elif call.data == "admin_user_list":
+        if str(user_id) != str(ADMIN_ID):
+            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
+            return
+        
+        users_data = load_users()
+        text = "📋 СПИСОК ПОЛЬЗОВАТЕЛЕЙ\n\n"
+        
+        for i, (uid, u_data) in enumerate(list(users_data.items())[:20], 1):
+            status = "🚫" if u_data.get("is_banned", False) else "✅"
+            text += f"{i}. {status} ID: {uid} | @{u_data.get('username', 'нет')} | Баланс: {u_data.get('balance', 0)}$\n"
+        
+        text += f"\n━━━━━━━━━━━━━━━\n👥 Всего: {len(users_data)} пользователей"
+        
+        keyboard = InlineKeyboardMarkup()
+        btn_back = InlineKeyboardButton("◀️ Назад", callback_data="admin_users")
+        keyboard.add(btn_back)
+        
+        edit_message(chat_id, message_id, text, keyboard)
+        bot.answer_callback_query(call.id)
+    
+    elif call.data == "admin_find_user":
+        if str(user_id) != str(ADMIN_ID):
+            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
+            return
+        
+        text = "🔍 ПОИСК ПОЛЬЗОВАТЕЛЯ\n\nВведите ID или @username пользователя:"
+        bot.send_message(user_id, text)
+        user_states[user_id] = {"awaiting_find_user": True}
+        bot.answer_callback_query(call.id)
+    
+    # ========== ПОПОЛНЕНИЯ ==========
+    elif call.data == "admin_deposits":
+        if str(user_id) != str(ADMIN_ID):
+            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
+            return
+        
+        text = "💰 УПРАВЛЕНИЕ ПОПОЛНЕНИЯМИ\n\nВыберите действие:"
+        edit_message(chat_id, message_id, text, admin_deposits_keyboard())
+        bot.answer_callback_query(call.id)
+    
+    elif call.data == "admin_manual_deposit":
+        if str(user_id) != str(ADMIN_ID):
+            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
+            return
+        
+        text = "💰 РУЧНОЕ ЗАЧИСЛЕНИЕ\n\nВведите данные в формате:\n`ID пользователя|сумма`\n\nПример:\n`123456789|10`"
+        bot.send_message(user_id, text, parse_mode="Markdown")
+        user_states[user_id] = {"awaiting_manual_deposit": True}
+        bot.answer_callback_query(call.id)
+    
+    # ========== РАССЫЛКА ==========
+    elif call.data == "admin_mailing":
+        if str(user_id) != str(ADMIN_ID):
+            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
+            return
+        
+        text = "📢 РАССЫЛКА\n\nВведите текст сообщения для рассылки всем пользователям:\n\n(Для отмены введите /cancel)"
+        bot.send_message(user_id, text)
+        user_states[user_id] = {"awaiting_mailing": True}
+        bot.answer_callback_query(call.id)
+    
+    # ========== СТАТИСТИКА ==========
     elif call.data == "admin_stats":
-        users = load_users()
+        if str(user_id) != str(ADMIN_ID):
+            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
+            return
+        
+        users_data = load_users()
         purchases = load_purchases()
-        total_users = len(users)
+        products = load_products()
+        
+        total_users = len(users_data)
+        banned_users = sum(1 for u in users_data.values() if u.get("is_banned", False))
         total_purchases = sum(len(p) for p in purchases.values())
         total_income = sum(p.get("amount", 0) for p_list in purchases.values() for p in p_list)
         
         text = f"📊 СТАТИСТИКА\n\n"
+        text += f"━━━━━━━━━━━━━━━\n"
         text += f"👥 Всего пользователей: {total_users}\n"
+        text += f"🚫 Заблокировано: {banned_users}\n"
         text += f"📦 Всего покупок: {total_purchases}\n"
-        text += f"💰 Общий доход: {total_income}$"
+        text += f"💰 Общий доход: {total_income}$\n"
+        text += f"━━━━━━━━━━━━━━━\n\n"
+        text += f"📦 ОСТАТКИ ТОВАРОВ:\n"
+        
+        for key, product in products.items():
+            text += f"{product['emoji']} {product['name']}: {product['stock']} шт\n"
         
         keyboard = InlineKeyboardMarkup()
         btn_back = InlineKeyboardButton("◀️ Назад", callback_data="admin_panel")
@@ -489,131 +798,212 @@ def callback_handler(call):
         
         edit_message(chat_id, message_id, text, keyboard)
         bot.answer_callback_query(call.id)
-
-def admin_products_keyboard():
-    keyboard = InlineKeyboardMarkup(row_width=1)
-    btn1 = InlineKeyboardButton("➕ Добавить товар", callback_data="add_product")
-    btn2 = InlineKeyboardButton("✏️ Изменить товар", callback_data="edit_product")
-    btn3 = InlineKeyboardButton("❌ Удалить товар", callback_data="delete_product")
-    btn_back = InlineKeyboardButton("◀️ Назад", callback_data="admin_panel")
-    keyboard.add(btn1, btn2, btn3, btn_back)
-    return keyboard
+    
+    # ========== БАН ПОЛЬЗОВАТЕЛЯ ==========
+    elif call.data == "admin_ban":
+        if str(user_id) != str(ADMIN_ID):
+            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
+            return
+        
+        text = "⚠️ БАН ПОЛЬЗОВАТЕЛЯ\n\nВведите ID пользователя для блокировки/разблокировки:\n\n(Для отмены введите /cancel)"
+        bot.send_message(user_id, text)
+        user_states[user_id] = {"awaiting_ban": True}
+        bot.answer_callback_query(call.id)
+    
+    elif call.data.startswith("check_payment_"):
+        amount = float(call.data.split("_")[2])
+        add_balance(user_id, amount)
+        
+        text = f"✅ Баланс пополнен на {amount}$!\n\nТекущий баланс: {get_user_balance(user_id)}$"
+        
+        try:
+            bot.edit_message_text(text, chat_id=user_id, message_id=message_id, reply_markup=None)
+        except:
+            bot.send_message(user_id, text)
+        
+        fake_message = type('obj', (object,), {'from_user': call.from_user, 'chat': call.message.chat})()
+        send_main_menu(fake_message)
+        bot.answer_callback_query(call.id, "Баланс пополнен!", show_alert=True)
 
 # ========== ОБРАБОТКА СООБЩЕНИЙ ==========
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
     user_id = message.from_user.id
     
-    # Проверяем, ждём ли мы количество для покупки
-    if user_id in user_states and "product_key" in user_states[user_id]:
-        state = user_states.pop(user_id)
-        product_key = state["product_key"]
-        product = state["product"]
-        process_amount(message, product_key, product)
+    if message.text == "/cancel":
+        if user_id in user_states:
+            del user_states[user_id]
+            bot.send_message(user_id, "❌ Действие отменено")
+            send_main_menu(message)
         return
     
-    # Проверяем, ждём ли мы сумму для пополнения
-    if user_id in user_states and user_states[user_id].get("awaiting_custom_deposit"):
-        user_states.pop(user_id)
-        process_custom_deposit(message)
-        return
-    
-    # Если ничего не ждём, отправляем в главное меню
-    send_main_menu(message)
-
-def process_amount(message, product_key, product):
-    user_id = message.from_user.id
-    
-    try:
-        quantity = int(message.text.strip())
-        if quantity <= 0 or quantity > 100:
-            raise ValueError
-    except:
-        bot.send_message(user_id, "❌ Введите корректное число (от 1 до 100)")
-        return
-    
-    if quantity > product["stock"]:
-        bot.send_message(user_id, f"❌ В наличии только {product['stock']} шт")
-        return
-    
-    total_price = quantity * product["price"]
-    balance = get_user_balance(user_id)
-    
-    if balance < total_price:
-        text = f"❌ Недостаточно средств\n\n"
-        text += f"Вы запросили: {quantity} шт\n"
-        text += f"Сумма: {total_price}$\n"
-        text += f"Ваш баланс: {balance}$\n\n"
-        text += f"Не хватает: {total_price - balance}$"
+    # Добавление товара
+    if user_id in user_states and user_states[user_id].get("awaiting_add_product"):
+        try:
+            data = message.text.split("|")
+            if len(data) >= 6:
+                product_id = data[0].strip().lower().replace(" ", "_")
+                name = data[1].strip()
+                price = float(data[2].strip())
+                stock = int(data[3].strip())
+                emoji = data[4].strip()
+                description = data[5].strip()
+                
+                products = load_products()
+                products[product_id] = {
+                    "name": name,
+                    "emoji": emoji,
+                    "price": price,
+                    "stock": stock,
+                    "description": description
+                }
+                save_products(products)
+                bot.send_message(user_id, f"✅ Товар '{name}' успешно добавлен!")
+            else:
+                bot.send_message(user_id, "❌ Неверный формат! Используйте: id|название|цена|количество|эмодзи|описание")
+        except Exception as e:
+            bot.send_message(user_id, f"❌ Ошибка: {e}")
         
-        keyboard = InlineKeyboardMarkup(row_width=2)
-        btn_pay = InlineKeyboardButton("💰 Пополнить", callback_data="balance")
-        btn_back = InlineKeyboardButton("📦 Каталог", callback_data="catalog")
-        keyboard.add(btn_pay, btn_back)
-        
-        bot.send_message(user_id, text, reply_markup=keyboard)
+        del user_states[user_id]
+        send_main_menu(message)
         return
     
-    # Генерация данных (в реальном проекте здесь API для получения токенов)
-    data_list = []
-    for i in range(quantity):
-        fake_data = f"{product['name']}_TOKEN_{user_id}_{int(time.time())}_{i+1}"
-        data_list.append(fake_data)
+    # Редактирование товара
+    if user_id in user_states and "awaiting_edit_product" in user_states[user_id]:
+        product_key = user_states[user_id]["awaiting_edit_product"]
+        try:
+            data = message.text.split("|")
+            if len(data) >= 5:
+                name = data[0].strip()
+                price = float(data[1].strip())
+                stock = int(data[2].strip())
+                emoji = data[3].strip()
+                description = data[4].strip()
+                
+                products = load_products()
+                if product_key in products:
+                    products[product_key]["name"] = name
+                    products[product_key]["price"] = price
+                    products[product_key]["stock"] = stock
+                    products[product_key]["emoji"] = emoji
+                    products[product_key]["description"] = description
+                    save_products(products)
+                    bot.send_message(user_id, f"✅ Товар успешно изменён!")
+                else:
+                    bot.send_message(user_id, f"❌ Товар не найден!")
+            else:
+                bot.send_message(user_id, "❌ Неверный формат! Используйте: название|цена|количество|эмодзи|описание")
+        except Exception as e:
+            bot.send_message(user_id, f"❌ Ошибка: {e}")
+        
+        del user_states[user_id]
+        send_main_menu(message)
+        return
     
-    # Списываем баланс
-    deduct_balance(user_id, total_price)
+    # Поиск пользователя
+    if user_id in user_states and user_states[user_id].get("awaiting_find_user"):
+        search = message.text.strip()
+        users_data = load_users()
+        
+        found = None
+        if search.isdigit():
+            found = users_data.get(search)
+        else:
+            search_clean = search.replace("@", "")
+            for uid, u_data in users_data.items():
+                if u_data.get("username") == search_clean:
+                    found = u_data
+                    break
+        
+        if found:
+            text = f"👤 ПОЛЬЗОВАТЕЛЬ НАЙДЕН\n\n"
+            text += f"ID: {found.get('user_id')}\n"
+            text += f"Username: @{found.get('username', 'нет')}\n"
+            text += f"💰 Баланс: {found.get('balance', 0)}$\n"
+            text += f"📦 Куплено: {found.get('total_bought', 0)} акков\n"
+            text += f"👥 Рефералов: {len(found.get('referrals', []))}\n"
+            text += f"💰 Реф. заработок: {found.get('referral_earnings', 0)}$\n"
+            text += f"🚫 Статус: {'Заблокирован' if found.get('is_banned', False) else 'Активен'}\n"
+            text += f"📅 Зарегистрирован: {found.get('registered_at', 'неизвестно')}"
+        else:
+            text = f"❌ Пользователь '{search}' не найден!"
+        
+        bot.send_message(user_id, text)
+        del user_states[user_id]
+        send_main_menu(message)
+        return
     
-    # Добавляем бонус рефереру (10%)
-    users = load_users()
-    user_data = users.get(str(user_id), {})
-    referrer_id = user_data.get("referrer_id")
-    if referrer_id:
-        bonus = total_price * 0.1
-        add_referral_earning(referrer_id, bonus)
-        bot.send_message(referrer_id, f"🎉 Ваш реферал совершил покупку!\n➕ Получено: {bonus}$")
+    # Ручное зачисление
+    if user_id in user_states and user_states[user_id].get("awaiting_manual_deposit"):
+        try:
+            data = message.text.split("|")
+            target_id = int(data[0].strip())
+            amount = float(data[1].strip())
+            
+            add_balance(target_id, amount)
+            bot.send_message(user_id, f"✅ Пользователю ID:{target_id} зачислено {amount}$")
+            
+            try:
+                bot.send_message(target_id, f"💰 Вам зачислено {amount}$ на баланс!\nТекущий баланс: {get_user_balance(target_id)}$")
+            except:
+                pass
+        except Exception as e:
+            bot.send_message(user_id, f"❌ Ошибка: {e}")
+        
+        del user_states[user_id]
+        send_main_menu(message)
+        return
     
-    # Обновляем статистику покупок
-    purchases = load_purchases()
-    if str(user_id) not in purchases:
-        purchases[str(user_id)] = []
+    # Рассылка
+    if user_id in user_states and user_states[user_id].get("awaiting_mailing"):
+        msg_text = message.text
+        users_data = load_users()
+        
+        success = 0
+        fail = 0
+        
+        bot.send_message(user_id, "📢 Начинаю рассылку...")
+        
+        for uid in users_data.keys():
+            try:
+                bot.send_message(int(uid), f"📢 РАССЫЛКА ОТ АДМИНА\n\n{msg_text}")
+                success += 1
+                time.sleep(0.05)
+            except:
+                fail += 1
+        
+        bot.send_message(user_id, f"✅ Рассылка завершена!\n📨 Доставлено: {success}\n❌ Ошибок: {fail}")
+        del user_states[user_id]
+        send_main_menu(message)
+        return
     
-    for data in data_list:
-        purchases[str(user_id)].append({
-            "product": product["name"],
-            "quantity": 1,
-            "amount": product["price"],
-            "data": data,
-            "time": str(datetime.now())
-        })
-    save_purchases(purchases)
-    
-    # Обновляем количество купленных аккаунтов
-    users[str(user_id)]["total_bought"] = users[str(user_id)].get("total_bought", 0) + quantity
-    save_users(users)
-    
-    # Уменьшаем остаток товара
-    products = load_products()
-    products[product_key]["stock"] -= quantity
-    save_products(products)
-    
-    # Отправляем данные пользователю
-    text = f"✅ Покупка успешна!\n\n"
-    text += f"Товар: {product['emoji']} {product['name']}\n"
-    text += f"Количество: {quantity} шт\n"
-    text += f"Сумма: {total_price}$\n\n"
-    text += f"━━━━━━━━━━━━━━━\n\n"
-    text += f"📦 Ваши данные:\n"
-    
-    for i, data in enumerate(data_list, 1):
-        text += f"{i}. {data}\n"
-    
-    text += f"\n━━━━━━━━━━━━━━━\n\n"
-    text += "⚠️ Сохраните данные! Они не хранятся на сервере."
-    
-    bot.send_message(user_id, text)
-    
-    # Возвращаем в главное меню
-    send_main_menu(message)
+    # Бан пользователя
+    if user_id in user_states and user_states[user_id].get("awaiting_ban"):
+        try:
+            target_id = int(message.text.strip())
+            users_data = load_users()
+            
+            if str(target_id) in users_data:
+                current_status = users_data[str(target_id)].get("is_banned", False)
+                new_status = not current_status
+                users_data[str(target_id)]["is_banned"] = new_status
+                save_users(users_data)
+                
+                status_text = "заблокирован" if new_status else "разблокирован"
+                bot.send_message(user_id, f"✅ Пользователь ID:{target_id} {status_text}!")
+                
+                try:
+                    bot.send_message(target_id, f"⛔ Вы были {status_text} в боте!" if new_status else f"✅ Вы были разблокированы в боте!")
+                except:
+                    pass
+            else:
+                bot.send_message(user_id, f"❌ Пользователь ID:{target_id} не найден!")
+        except:
+            bot.send_message(user_id, "❌ Введите корректный ID пользователя!")
+        
+        del user_states[user_id]
+        send_main_menu(message)
+        return
 
 def process_payment(chat_id, user_id, amount):
     invoice_url = create_invoice(amount, user_id)
@@ -625,7 +1015,7 @@ def process_payment(chat_id, user_id, amount):
     text = f"💰 ПОПОЛНЕНИЕ БАЛАНСА\n\n"
     text += f"Сумма: {amount}$\n"
     text += f"Оплатите по ссылке:\n{invoice_url}\n\n"
-    text += "После оплаты напишите /start и нажмите 'Проверить оплату'"
+    text += "После оплаты нажмите 'Проверить оплату'"
     
     keyboard = InlineKeyboardMarkup()
     btn_check = InlineKeyboardButton("✅ Проверить оплату", callback_data=f"check_payment_{amount}")
@@ -633,40 +1023,6 @@ def process_payment(chat_id, user_id, amount):
     keyboard.add(btn_check, btn_back)
     
     bot.send_message(user_id, text, reply_markup=keyboard)
-
-def process_custom_deposit(message):
-    user_id = message.from_user.id
-    
-    try:
-        amount = float(message.text.strip())
-        if amount < 5 or amount > 5000:
-            raise ValueError
-    except:
-        bot.send_message(user_id, "❌ Введите сумму от 5$ до 5000$")
-        return
-    
-    process_payment(message.chat.id, user_id, amount)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("check_payment_"))
-def check_payment_callback(call):
-    user_id = call.from_user.id
-    amount = float(call.data.split("_")[2])
-    
-    # Добавляем баланс (в реальном проекте проверяем платеж через API)
-    add_balance(user_id, amount)
-    
-    text = f"✅ Баланс пополнен на {amount}$!\n\nТекущий баланс: {get_user_balance(user_id)}$"
-    
-    try:
-        bot.edit_message_text(text, chat_id=user_id, message_id=call.message.message_id, reply_markup=None)
-    except:
-        bot.send_message(user_id, text)
-    
-    # Отправляем главное меню
-    fake_message = type('obj', (object,), {'from_user': call.from_user, 'chat': call.message.chat})()
-    send_main_menu(fake_message)
-    
-    bot.answer_callback_query(call.id, "Баланс пополнен!", show_alert=True)
 
 # ========== ЗАПУСК БОТА ==========
 if __name__ == "__main__":
