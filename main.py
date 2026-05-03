@@ -30,6 +30,52 @@ user_states = {}
 # Хранилище активных счетов: {invoice_id: {user_id, amount, message_id, chat_id}}
 active_invoices = {}
 
+# ========== ПРЕМИУМ ЭМОДЗИ ID ==========
+# Используем кастомные эмодзи через icon_custom_emoji_id
+EMOJI_IDS = {
+    "catalog":    "5433658070094805716",   # 📦
+    "referral":   "5433698754199240073",   # 💸
+    "support":    "5435879547940526151",   # 🆘
+    "terms":      "5440539497383087970",   # 📜
+    "balance":    "5433698017568549458",   # 💰
+    "back":       "5438249918978864300",   # ◀️
+    "pay":        "5432949633429597862",   # 💳
+    "cancel":     "5440660757194744323",   # ❌
+    "ref_link":   "5433698017568549458",   # 🔗
+    "ref_stats":  "5434026073619227975",   # 📊
+    "home":       "5433931948782038025",   # 🏠
+    "invite":     "5433658070094805716",   # 🎁
+    "buy":        "5433698017568549458",   # ✅
+    "deposit_5":  "5433698017568549458",   # 💰
+    "deposit_10": "5433698017568549458",
+    "deposit_25": "5433698017568549458",
+    "deposit_50": "5433698017568549458",
+    "custom_dep": "5432949633429597862",   # 🔢
+    "agree":      "5440539497383087970",   # ✅
+}
+
+
+def pe(emoji_id, fallback="·"):
+    """Возвращает строку с кастомным эмодзи для текста кнопки"""
+    return f"" + fallback
+
+
+def btn(text, callback_data=None, url=None, emoji_id=None):
+    """Создаёт InlineKeyboardButton с опциональным премиум эмодзи"""
+    if emoji_id:
+        button = InlineKeyboardButton(
+            text=text,
+            callback_data=callback_data,
+            url=url
+        )
+        # Устанавливаем icon_custom_emoji_id
+        button.icon_custom_emoji_id = emoji_id
+        return button
+    if url:
+        return InlineKeyboardButton(text=text, url=url)
+    return InlineKeyboardButton(text=text, callback_data=callback_data)
+
+
 # ========== ИНИЦИАЛИЗАЦИЯ БАЗ ДАННЫХ ==========
 def init_files():
     if not os.path.exists(USERS_FILE):
@@ -158,7 +204,6 @@ def add_referral_earning(user_id, amount):
 
 # ========== КРИПТОПЛАТЕЖИ (CRYPTOBOT) ==========
 def create_invoice(amount, user_id):
-    """Создаёт счёт в CryptoBot и возвращает (invoice_id, pay_url) или (None, None)"""
     url = "https://pay.crypt.bot/api/createInvoice"
     headers = {
         "Crypto-Pay-API-Token": CRYPTOBOT_TOKEN,
@@ -168,7 +213,7 @@ def create_invoice(amount, user_id):
         "asset": "USDT",
         "amount": str(amount),
         "description": f"Пополнение баланса. User ID: {user_id}",
-        "expires_in": 3600  # счёт живёт 1 час
+        "expires_in": 3600
     }
     try:
         response = requests.post(url, headers=headers, json=data, timeout=10)
@@ -182,7 +227,6 @@ def create_invoice(amount, user_id):
 
 
 def check_invoice_status(invoice_id):
-    """Проверяет статус счёта. Возвращает 'paid' / 'active' / 'expired' / None"""
     url = "https://pay.crypt.bot/api/getInvoices"
     headers = {"Crypto-Pay-API-Token": CRYPTOBOT_TOKEN}
     params = {"invoice_ids": str(invoice_id)}
@@ -192,7 +236,7 @@ def check_invoice_status(invoice_id):
         if result.get("ok"):
             items = result["result"].get("items", [])
             if items:
-                return items[0].get("status")  # paid / active / expired
+                return items[0].get("status")
     except Exception as e:
         print(f"Ошибка проверки инвойса: {e}")
     return None
@@ -200,7 +244,6 @@ def check_invoice_status(invoice_id):
 
 # ========== АВТО-ПРОВЕРКА ОПЛАТЫ ==========
 def payment_watcher():
-    """Фоновый поток: проверяет все активные счета каждые 3 секунды"""
     while True:
         time.sleep(3)
         if not active_invoices:
@@ -218,7 +261,6 @@ def payment_watcher():
 
                     add_balance(uid, amount)
 
-                    # Уведомляем реферера если есть
                     users_data = load_users()
                     referrer_id = users_data.get(str(uid), {}).get("referrer_id")
                     if referrer_id:
@@ -246,7 +288,6 @@ def payment_watcher():
                     to_remove.append(invoice_id)
 
                 elif status in ("expired", None):
-                    # Если счёт просрочен — тихо убираем
                     if status == "expired":
                         try:
                             bot.edit_message_text(
@@ -265,17 +306,31 @@ def payment_watcher():
             active_invoices.pop(inv_id, None)
 
 
-# ========== КЛАВИАТУРЫ ==========
+# ========== КЛАВИАТУРЫ С ПРЕМИУМ ЭМОДЗИ ==========
+
+def _make_btn(text, callback_data=None, url=None, emoji_id=None):
+    """
+    Создаёт кнопку. Если передан emoji_id — устанавливает icon_custom_emoji_id.
+    Работает через прямую установку атрибута объекта кнопки.
+    """
+    if url:
+        b = InlineKeyboardButton(text=text, url=url)
+    else:
+        b = InlineKeyboardButton(text=text, callback_data=callback_data)
+    if emoji_id:
+        b.icon_custom_emoji_id = emoji_id
+    return b
+
+
 def main_menu_keyboard(user_id=None):
     keyboard = InlineKeyboardMarkup(row_width=2)
-    btn1 = InlineKeyboardButton("📦 Каталог", callback_data="catalog")
-    btn2 = InlineKeyboardButton("💸 Реф. баланс", callback_data="referral")
-    btn3 = InlineKeyboardButton("🆘 Поддержка", callback_data="support")
-    btn4 = InlineKeyboardButton("📜 Оферта", callback_data="terms")
-    btn5 = InlineKeyboardButton("💰 Баланс", callback_data="balance")
-    keyboard.add(btn1, btn2, btn3, btn4, btn5)
-    if user_id and str(user_id) == str(ADMIN_ID):
-        keyboard.add(InlineKeyboardButton("👑 Админ панель", callback_data="admin_panel"))
+    keyboard.add(
+        _make_btn("📦 Каталог",      callback_data="catalog",   emoji_id="5433658070094805716"),
+        _make_btn("💸 Реф. баланс",  callback_data="referral",  emoji_id="5433698754199240073"),
+        _make_btn("🆘 Поддержка",    callback_data="support",   emoji_id="5435879547940526151"),
+        _make_btn("📜 Оферта",       callback_data="terms",     emoji_id="5440539497383087970"),
+        _make_btn("💰 Баланс",       callback_data="balance",   emoji_id="5433698017568549458"),
+    )
     return keyboard
 
 
@@ -283,24 +338,26 @@ def catalog_keyboard():
     keyboard = InlineKeyboardMarkup(row_width=2)
     products = load_products()
     for key, product in products.items():
-        keyboard.add(InlineKeyboardButton(
+        keyboard.add(_make_btn(
             f"{product['emoji']} {product['name']} — {product['price']}$",
-            callback_data=f"buy_{key}"
+            callback_data=f"buy_{key}",
+            emoji_id="5433658070094805716"
         ))
-    keyboard.add(InlineKeyboardButton("◀️ Назад", callback_data="back_to_menu"))
+    keyboard.add(_make_btn("◀️ Назад", callback_data="back_to_menu", emoji_id="5438249918978864300"))
     return keyboard
 
 
 def admin_keyboard():
+    # Админ панель — без премиум эмодзи (по условию задачи)
     keyboard = InlineKeyboardMarkup(row_width=2)
     keyboard.add(
-        InlineKeyboardButton("📦 Товары", callback_data="admin_products"),
-        InlineKeyboardButton("👥 Пользователи", callback_data="admin_users"),
-        InlineKeyboardButton("💰 Пополнения", callback_data="admin_deposits"),
-        InlineKeyboardButton("📢 Рассылка", callback_data="admin_mailing"),
-        InlineKeyboardButton("📊 Статистика", callback_data="admin_stats"),
+        InlineKeyboardButton("📦 Товары",            callback_data="admin_products"),
+        InlineKeyboardButton("👥 Пользователи",      callback_data="admin_users"),
+        InlineKeyboardButton("💰 Пополнения",        callback_data="admin_deposits"),
+        InlineKeyboardButton("📢 Рассылка",          callback_data="admin_mailing"),
+        InlineKeyboardButton("📊 Статистика",        callback_data="admin_stats"),
         InlineKeyboardButton("⚠️ Бан пользователя", callback_data="admin_ban"),
-        InlineKeyboardButton("🔙 Выход", callback_data="back_to_menu")
+        InlineKeyboardButton("🔙 Выход",             callback_data="back_to_menu")
     )
     return keyboard
 
@@ -310,8 +367,8 @@ def admin_products_keyboard():
     keyboard.add(
         InlineKeyboardButton("➕ Добавить товар", callback_data="add_product"),
         InlineKeyboardButton("✏️ Изменить товар", callback_data="edit_product"),
-        InlineKeyboardButton("❌ Удалить товар", callback_data="delete_product"),
-        InlineKeyboardButton("◀️ Назад", callback_data="admin_panel")
+        InlineKeyboardButton("❌ Удалить товар",  callback_data="delete_product"),
+        InlineKeyboardButton("◀️ Назад",          callback_data="admin_panel")
     )
     return keyboard
 
@@ -320,8 +377,8 @@ def admin_users_keyboard():
     keyboard = InlineKeyboardMarkup(row_width=1)
     keyboard.add(
         InlineKeyboardButton("📋 Список пользователей", callback_data="admin_user_list"),
-        InlineKeyboardButton("🔍 Найти пользователя", callback_data="admin_find_user"),
-        InlineKeyboardButton("◀️ Назад", callback_data="admin_panel")
+        InlineKeyboardButton("🔍 Найти пользователя",   callback_data="admin_find_user"),
+        InlineKeyboardButton("◀️ Назад",                callback_data="admin_panel")
     )
     return keyboard
 
@@ -330,11 +387,135 @@ def admin_deposits_keyboard():
     keyboard = InlineKeyboardMarkup(row_width=1)
     keyboard.add(
         InlineKeyboardButton("💰 Ручное зачисление", callback_data="admin_manual_deposit"),
-        InlineKeyboardButton("◀️ Назад", callback_data="admin_panel")
+        InlineKeyboardButton("◀️ Назад",             callback_data="admin_panel")
     )
     return keyboard
 
 
+def referral_keyboard():
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        _make_btn("🔗 Моя ссылка",    callback_data="copy_ref_link", emoji_id="5433698017568549458"),
+        _make_btn("📊 Мои рефералы",  callback_data="my_referrals",  emoji_id="5434026073619227975"),
+        _make_btn("🏠 Главное меню",  callback_data="back_to_menu",  emoji_id="5433931948782038025"),
+    )
+    return keyboard
+
+
+def my_referrals_keyboard(has_referrals=False):
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    if not has_referrals:
+        keyboard.add(
+            _make_btn("🔗 Моя ссылка",   callback_data="copy_ref_link", emoji_id="5433698017568549458"),
+            _make_btn("🏠 Главное меню", callback_data="back_to_menu",  emoji_id="5433931948782038025"),
+        )
+    else:
+        keyboard.add(
+            _make_btn("🎁 Пригласить ещё", callback_data="referral",     emoji_id="5433658070094805716"),
+            _make_btn("🏠 Главное меню",   callback_data="back_to_menu", emoji_id="5433931948782038025"),
+        )
+    return keyboard
+
+
+def support_keyboard():
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(_make_btn("◀️ Назад", callback_data="back_to_menu", emoji_id="5438249918978864300"))
+    return keyboard
+
+
+def terms_keyboard():
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        _make_btn("✅ Согласен", callback_data="back_to_menu", emoji_id="5440539497383087970"),
+        _make_btn("◀️ Назад",   callback_data="back_to_menu", emoji_id="5438249918978864300"),
+    )
+    return keyboard
+
+
+def balance_keyboard():
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    for amount in [5, 10, 25, 50]:
+        keyboard.add(_make_btn(f"💰 {amount}$", callback_data=f"deposit_{amount}",
+                               emoji_id="5433698017568549458"))
+    keyboard.add(_make_btn("🔢 Другая сумма", callback_data="deposit_custom",
+                            emoji_id="5432949633429597862"))
+    keyboard.add(_make_btn("◀️ Назад", callback_data="back_to_menu",
+                            emoji_id="5438249918978864300"))
+    return keyboard
+
+
+def payment_keyboard(invoice_url):
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        _make_btn("💳 Оплатить", url=invoice_url,              emoji_id="5432949633429597862"),
+        _make_btn("❌ Отмена",   callback_data="cancel_payment", emoji_id="5440660757194744323"),
+    )
+    return keyboard
+
+
+def buy_product_keyboard():
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(_make_btn("◀️ В каталог", callback_data="catalog", emoji_id="5438249918978864300"))
+    return keyboard
+
+
+def confirm_buy_keyboard(product_key, quantity, insufficient=False):
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    if insufficient:
+        keyboard.add(
+            _make_btn("💰 Пополнить баланс", callback_data="balance",  emoji_id="5433698017568549458"),
+            _make_btn("◀️ Каталог",          callback_data="catalog",  emoji_id="5438249918978864300"),
+        )
+    else:
+        keyboard.add(
+            _make_btn("✅ Купить", callback_data=f"confirm_buy_{product_key}_{quantity}",
+                       emoji_id="5440539497383087970"),
+            _make_btn("❌ Отмена", callback_data="cancel_buy",
+                       emoji_id="5440660757194744323"),
+        )
+    return keyboard
+
+
+def after_buy_keyboard():
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        _make_btn("🆘 Поддержка",  callback_data="support",     emoji_id="5435879547940526151"),
+        _make_btn("🏠 Главное меню", callback_data="back_to_menu", emoji_id="5433931948782038025"),
+    )
+    return keyboard
+
+
+def cancel_buy_keyboard():
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        _make_btn("📦 Каталог",     callback_data="catalog",     emoji_id="5433658070094805716"),
+        _make_btn("🏠 Главное меню", callback_data="back_to_menu", emoji_id="5433931948782038025"),
+    )
+    return keyboard
+
+
+def cancel_payment_keyboard():
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        _make_btn("💰 Баланс",      callback_data="balance",     emoji_id="5433698017568549458"),
+        _make_btn("🏠 Главное меню", callback_data="back_to_menu", emoji_id="5433931948782038025"),
+    )
+    return keyboard
+
+
+def back_to_admin_keyboard():
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(InlineKeyboardButton("◀️ Назад", callback_data="admin_panel"))
+    return keyboard
+
+
+def back_to_admin_users_keyboard():
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(InlineKeyboardButton("◀️ Назад", callback_data="admin_users"))
+    return keyboard
+
+
+# ========== УТИЛИТЫ ==========
 def get_profile_text(user_id, username=None):
     users = load_users()
     user_data = users.get(str(user_id), {})
@@ -352,7 +533,6 @@ def get_profile_text(user_id, username=None):
     return text
 
 
-# ========== ОТПРАВКА СООБЩЕНИЙ ==========
 def send_main_menu(message):
     user_id = message.from_user.id
     username = message.from_user.username
@@ -391,7 +571,6 @@ def start_command(message):
         bot.send_message(user_id, "⛔ Вы заблокированы в этом боте!")
         return
 
-    # Реферальная ссылка
     args = message.text.split()
     if len(args) > 1:
         referrer_id = args[1]
@@ -423,7 +602,6 @@ def callback_handler(call):
 
     # ========== ГЛАВНОЕ МЕНЮ ==========
     if call.data == "back_to_menu":
-        # Сбрасываем состояние если было
         user_states.pop(user_id, None)
         text = get_profile_text(user_id, username)
         edit_message(chat_id, message_id, text, main_menu_keyboard(user_id))
@@ -455,13 +633,7 @@ def callback_handler(call):
         text += "━━━━━━━━━━━━━━━\n\n"
         text += "🎁 За каждую покупку реферала вы получаете 10% от суммы."
 
-        keyboard = InlineKeyboardMarkup(row_width=2)
-        keyboard.add(
-            InlineKeyboardButton("🔗 Моя ссылка", callback_data="copy_ref_link"),
-            InlineKeyboardButton("📊 Мои рефералы", callback_data="my_referrals"),
-            InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_menu")
-        )
-        edit_message(chat_id, message_id, text, keyboard)
+        edit_message(chat_id, message_id, text, referral_keyboard())
         bot.answer_callback_query(call.id)
 
     elif call.data == "my_referrals":
@@ -470,14 +642,9 @@ def callback_handler(call):
         referrals = user_data.get("referrals", [])
         purchases = load_purchases()
 
-        keyboard = InlineKeyboardMarkup(row_width=2)
-
         if not referrals:
             text = "📊 МОИ РЕФЕРАЛЫ\n\n👥 Пока никого нет\n\nПригласите друзей!"
-            keyboard.add(
-                InlineKeyboardButton("🔗 Моя ссылка", callback_data="copy_ref_link"),
-                InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_menu")
-            )
+            edit_message(chat_id, message_id, text, my_referrals_keyboard(has_referrals=False))
         else:
             text = "📊 МОИ РЕФЕРАЛЫ\n\n"
             for i, ref_id in enumerate(referrals[:10], 1):
@@ -488,12 +655,7 @@ def callback_handler(call):
                 ref_name = ref_user.get("username", f"ID{ref_id}")
                 text += f"{i}. @{ref_name} — {len(user_purchases)} покупок | бонус: {bonus}$\n"
             text += f"\n━━━━━━━━━━━━━━━\n👥 Всего: {len(referrals)}"
-            keyboard.add(
-                InlineKeyboardButton("🔗 Пригласить ещё", callback_data="referral"),
-                InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_menu")
-            )
-
-        edit_message(chat_id, message_id, text, keyboard)
+            edit_message(chat_id, message_id, text, my_referrals_keyboard(has_referrals=True))
         bot.answer_callback_query(call.id)
 
     elif call.data == "copy_ref_link":
@@ -503,9 +665,7 @@ def callback_handler(call):
 
     elif call.data == "support":
         text = "🆘 ПОДДЕРЖКА\n\nСвяжитесь с нами: @support_username"
-        keyboard = InlineKeyboardMarkup()
-        keyboard.add(InlineKeyboardButton("◀️ Назад", callback_data="back_to_menu"))
-        edit_message(chat_id, message_id, text, keyboard)
+        edit_message(chat_id, message_id, text, support_keyboard())
         bot.answer_callback_query(call.id)
 
     elif call.data == "terms":
@@ -544,26 +704,13 @@ def callback_handler(call):
 ━━━━━━━━━━━━━━━
 
 Продолжая использовать бота, вы соглашаетесь с правилами."""
-
-        keyboard = InlineKeyboardMarkup(row_width=2)
-        keyboard.add(
-            InlineKeyboardButton("✅ Согласен", callback_data="back_to_menu"),
-            InlineKeyboardButton("◀️ Назад", callback_data="back_to_menu")
-        )
-        edit_message(chat_id, message_id, text, keyboard)
+        edit_message(chat_id, message_id, text, terms_keyboard())
         bot.answer_callback_query(call.id)
 
     elif call.data == "balance":
         balance = get_user_balance(user_id)
         text = f"💰 ВАШ БАЛАНС\n\nТекущий баланс: {balance}$\n\nВыберите сумму для пополнения:"
-
-        keyboard = InlineKeyboardMarkup(row_width=2)
-        for amount in [5, 10, 25, 50]:
-            keyboard.add(InlineKeyboardButton(f"{amount}$", callback_data=f"deposit_{amount}"))
-        keyboard.add(InlineKeyboardButton("🔢 Другая сумма", callback_data="deposit_custom"))
-        keyboard.add(InlineKeyboardButton("◀️ Назад", callback_data="back_to_menu"))
-
-        edit_message(chat_id, message_id, text, keyboard)
+        edit_message(chat_id, message_id, text, balance_keyboard())
         bot.answer_callback_query(call.id)
 
     # ========== ПОКУПКА ТОВАРОВ ==========
@@ -588,12 +735,9 @@ def callback_handler(call):
                 f"━━━━━━━━━━━━━━━\n\n"
                 f"Введите количество (1–{product['stock']}):\n➡️ Например: 1")
 
-        keyboard = InlineKeyboardMarkup()
-        keyboard.add(InlineKeyboardButton("◀️ В каталог", callback_data="catalog"))
-        edit_message(chat_id, message_id, text, keyboard)
+        edit_message(chat_id, message_id, text, buy_product_keyboard())
         bot.answer_callback_query(call.id)
 
-        # Сохраняем состояние — ждём количество
         user_states[user_id] = {
             "awaiting_quantity": True,
             "product_key": product_key,
@@ -605,7 +749,6 @@ def callback_handler(call):
     # ========== ПОДТВЕРЖДЕНИЕ ПОКУПКИ ==========
     elif call.data.startswith("confirm_buy_"):
         parts = call.data.split("_")
-        # confirm_buy_{product_key}_{quantity}
         product_key = parts[2]
         quantity = int(parts[3])
         products = load_products()
@@ -634,16 +777,13 @@ def callback_handler(call):
             )
             return
 
-        # Списываем баланс
         if not deduct_balance(user_id, total_price):
             bot.answer_callback_query(call.id, "❌ Ошибка списания средств!", show_alert=True)
             return
 
-        # Уменьшаем остаток
         products[product_key]["stock"] -= quantity
         save_products(products)
 
-        # Сохраняем покупку
         purchases = load_purchases()
         if str(user_id) not in purchases:
             purchases[str(user_id)] = []
@@ -655,14 +795,12 @@ def callback_handler(call):
         })
         save_purchases(purchases)
 
-        # Обновляем total_bought
         users_data = load_users()
         users_data[str(user_id)]["total_bought"] = (
             users_data[str(user_id)].get("total_bought", 0) + quantity
         )
         save_users(users_data)
 
-        # Реферальный бонус
         referrer_id = users_data.get(str(user_id), {}).get("referrer_id")
         if referrer_id:
             bonus = round(total_price * 0.1, 2)
@@ -674,7 +812,6 @@ def callback_handler(call):
             except:
                 pass
 
-        # Уведомляем админа
         try:
             bot.send_message(ADMIN_ID,
                 f"🛒 НОВАЯ ПОКУПКА!\n\n"
@@ -691,22 +828,12 @@ def callback_handler(call):
                 f"Остаток баланса: {get_user_balance(user_id)}$\n\n"
                 f"Обратитесь в поддержку для получения товара.")
 
-        keyboard = InlineKeyboardMarkup(row_width=2)
-        keyboard.add(
-            InlineKeyboardButton("🆘 Поддержка", callback_data="support"),
-            InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_menu")
-        )
-        edit_message(chat_id, message_id, text, keyboard)
+        edit_message(chat_id, message_id, text, after_buy_keyboard())
         bot.answer_callback_query(call.id, "✅ Покупка успешна!", show_alert=True)
 
     elif call.data.startswith("cancel_buy"):
         user_states.pop(user_id, None)
-        edit_message(chat_id, message_id,
-                     "❌ Покупка отменена.",
-                     InlineKeyboardMarkup().add(
-                         InlineKeyboardButton("📦 Каталог", callback_data="catalog"),
-                         InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_menu")
-                     ))
+        edit_message(chat_id, message_id, "❌ Покупка отменена.", cancel_buy_keyboard())
         bot.answer_callback_query(call.id)
 
     # ========== ПОПОЛНЕНИЕ БАЛАНСА ==========
@@ -726,20 +853,14 @@ def callback_handler(call):
         bot.answer_callback_query(call.id)
 
     elif call.data == "cancel_payment":
-        # Удаляем из активных счетов по user_id
         to_remove = [inv_id for inv_id, info in active_invoices.items()
                      if info["user_id"] == user_id]
         for inv_id in to_remove:
             active_invoices.pop(inv_id, None)
-        edit_message(chat_id, message_id,
-                     "❌ Платёж отменён.",
-                     InlineKeyboardMarkup().add(
-                         InlineKeyboardButton("💰 Баланс", callback_data="balance"),
-                         InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_menu")
-                     ))
+        edit_message(chat_id, message_id, "❌ Платёж отменён.", cancel_payment_keyboard())
         bot.answer_callback_query(call.id)
 
-    # ========== АДМИН ПАНЕЛЬ ==========
+    # ========== АДМИН ПАНЕЛЬ (без премиум эмодзи) ==========
     elif call.data == "admin_panel":
         if str(user_id) != str(ADMIN_ID):
             bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
@@ -854,9 +975,7 @@ def callback_handler(call):
                      f"@{u_data.get('username', 'нет')} | "
                      f"Баланс: {u_data.get('balance', 0)}$\n")
         text += f"\n━━━━━━━━━━━━━━━\n👥 Всего: {len(users_data)}"
-        keyboard = InlineKeyboardMarkup()
-        keyboard.add(InlineKeyboardButton("◀️ Назад", callback_data="admin_users"))
-        edit_message(chat_id, message_id, text, keyboard)
+        edit_message(chat_id, message_id, text, back_to_admin_users_keyboard())
         bot.answer_callback_query(call.id)
 
     elif call.data == "admin_find_user":
@@ -918,9 +1037,7 @@ def callback_handler(call):
         for key, product in products.items():
             text += f"{product['emoji']} {product['name']}: {product['stock']} шт\n"
 
-        keyboard = InlineKeyboardMarkup()
-        keyboard.add(InlineKeyboardButton("◀️ Назад", callback_data="admin_panel"))
-        edit_message(chat_id, message_id, text, keyboard)
+        edit_message(chat_id, message_id, text, back_to_admin_keyboard())
         bot.answer_callback_query(call.id)
 
     elif call.data == "admin_ban":
@@ -963,12 +1080,10 @@ def handle_message(message):
 
         quantity = int(text)
         products = load_products()
-        # Перезагружаем актуальные данные
         product = products.get(product_key, product)
 
         if quantity > product["stock"]:
-            bot.send_message(user_id,
-                f"❌ В наличии только {product['stock']} шт!")
+            bot.send_message(user_id, f"❌ В наличии только {product['stock']} шт!")
             return
 
         total_price = round(product["price"] * quantity, 2)
@@ -984,34 +1099,24 @@ def handle_message(message):
             f"💰 После покупки: {round(balance - total_price, 2)}$\n\n"
         )
 
-        keyboard = InlineKeyboardMarkup(row_width=2)
-
-        if balance < total_price:
+        insufficient = balance < total_price
+        if insufficient:
             confirm_text += f"❌ Недостаточно средств! Нужно ещё {round(total_price - balance, 2)}$"
-            keyboard.add(
-                InlineKeyboardButton("💰 Пополнить баланс", callback_data="balance"),
-                InlineKeyboardButton("◀️ Каталог", callback_data="catalog")
-            )
         else:
             confirm_text += "Подтвердить покупку?"
-            keyboard.add(
-                InlineKeyboardButton(
-                    "✅ Купить",
-                    callback_data=f"confirm_buy_{product_key}_{quantity}"
-                ),
-                InlineKeyboardButton("❌ Отмена", callback_data="cancel_buy")
-            )
 
         del user_states[user_id]
 
         try:
             if msg_id:
-                bot.edit_message_text(confirm_text, chat_id=chat_id,
-                                      message_id=msg_id, reply_markup=keyboard)
+                bot.edit_message_text(confirm_text, chat_id=chat_id, message_id=msg_id,
+                                      reply_markup=confirm_buy_keyboard(product_key, quantity, insufficient))
             else:
-                bot.send_message(user_id, confirm_text, reply_markup=keyboard)
+                bot.send_message(user_id, confirm_text,
+                                 reply_markup=confirm_buy_keyboard(product_key, quantity, insufficient))
         except:
-            bot.send_message(user_id, confirm_text, reply_markup=keyboard)
+            bot.send_message(user_id, confirm_text,
+                             reply_markup=confirm_buy_keyboard(product_key, quantity, insufficient))
         return
 
     # ===== Произвольная сумма пополнения =====
@@ -1172,7 +1277,6 @@ def handle_message(message):
         send_main_menu(message)
         return
 
-    # Если никакое состояние не совпало — показываем меню
     send_main_menu(message)
 
 
@@ -1190,25 +1294,20 @@ def process_payment(chat_id, user_id, amount, edit_msg_id=None):
             f"Нажмите «Оплатить» и завершите оплату в CryptoBot.\n"
             f"Баланс пополнится автоматически в течение нескольких секунд.")
 
-    keyboard = InlineKeyboardMarkup(row_width=2)
-    keyboard.add(
-        InlineKeyboardButton("💳 Оплатить", url=invoice_url),
-        InlineKeyboardButton("❌ Отмена", callback_data="cancel_payment")
-    )
+    kb = payment_keyboard(invoice_url)
 
     if edit_msg_id:
         try:
-            sent = bot.edit_message_text(text, chat_id=chat_id,
-                                         message_id=edit_msg_id, reply_markup=keyboard)
+            bot.edit_message_text(text, chat_id=chat_id,
+                                  message_id=edit_msg_id, reply_markup=kb)
             msg_id = edit_msg_id
         except:
-            sent = bot.send_message(chat_id, text, reply_markup=keyboard)
+            sent = bot.send_message(chat_id, text, reply_markup=kb)
             msg_id = sent.message_id
     else:
-        sent = bot.send_message(chat_id, text, reply_markup=keyboard)
+        sent = bot.send_message(chat_id, text, reply_markup=kb)
         msg_id = sent.message_id
 
-    # Регистрируем счёт для автопроверки
     if invoice_id:
         active_invoices[invoice_id] = {
             "user_id": user_id,
@@ -1222,7 +1321,6 @@ def process_payment(chat_id, user_id, amount, edit_msg_id=None):
 if __name__ == "__main__":
     init_files()
 
-    # Запускаем фоновый поток проверки оплаты
     watcher_thread = threading.Thread(target=payment_watcher, daemon=True)
     watcher_thread.start()
 
