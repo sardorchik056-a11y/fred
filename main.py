@@ -26,8 +26,6 @@ PRODUCTS_FILE = "products.json"
 PURCHASES_FILE = "purchases.json"
 
 user_states = {}
-
-# Хранилище активных счетов: {invoice_id: {user_id, amount, message_id, chat_id}}
 active_invoices = {}
 
 # ========== ПРЕМИУМ ЭМОДЗИ ID ==========
@@ -91,31 +89,25 @@ def load_users():
     with open(USERS_FILE, "r", encoding="utf-8") as f:
         return json.load(f)
 
-
 def save_users(users):
     with open(USERS_FILE, "w", encoding="utf-8") as f:
         json.dump(users, f, indent=4, ensure_ascii=False)
-
 
 def load_products():
     with open(PRODUCTS_FILE, "r", encoding="utf-8") as f:
         return json.load(f)
 
-
 def save_products(products):
     with open(PRODUCTS_FILE, "w", encoding="utf-8") as f:
         json.dump(products, f, indent=4, ensure_ascii=False)
-
 
 def load_purchases():
     with open(PURCHASES_FILE, "r", encoding="utf-8") as f:
         return json.load(f)
 
-
 def save_purchases(purchases):
     with open(PURCHASES_FILE, "w", encoding="utf-8") as f:
         json.dump(purchases, f, indent=4, ensure_ascii=False)
-
 
 def register_user(user_id, username=None):
     users = load_users()
@@ -133,13 +125,11 @@ def register_user(user_id, username=None):
         }
         save_users(users)
 
-
 def add_balance(user_id, amount):
     users = load_users()
     if str(user_id) in users:
         users[str(user_id)]["balance"] = round(users[str(user_id)]["balance"] + amount, 2)
         save_users(users)
-
 
 def deduct_balance(user_id, amount):
     users = load_users()
@@ -148,7 +138,6 @@ def deduct_balance(user_id, amount):
         save_users(users)
         return True
     return False
-
 
 def get_user_balance(user_id):
     users = load_users()
@@ -164,7 +153,6 @@ def add_referral(user_id, referrer_id):
         users[referrer_id]["referrals"].append(user_id)
         save_users(users)
 
-
 def add_referral_earning(user_id, amount):
     users = load_users()
     if str(user_id) in users:
@@ -175,13 +163,10 @@ def add_referral_earning(user_id, amount):
         save_users(users)
 
 
-# ========== КРИПТОПЛАТЕЖИ (CRYPTOBOT) ==========
+# ========== КРИПТОПЛАТЕЖИ ==========
 def create_invoice(amount, user_id):
     url = "https://pay.crypt.bot/api/createInvoice"
-    headers = {
-        "Crypto-Pay-API-Token": CRYPTOBOT_TOKEN,
-        "Content-Type": "application/json"
-    }
+    headers = {"Crypto-Pay-API-Token": CRYPTOBOT_TOKEN, "Content-Type": "application/json"}
     data = {
         "asset": "USDT",
         "amount": str(amount),
@@ -197,7 +182,6 @@ def create_invoice(amount, user_id):
     except Exception as e:
         print(f"Ошибка создания инвойса: {e}")
     return None, None
-
 
 def check_invoice_status(invoice_id):
     url = "https://pay.crypt.bot/api/getInvoices"
@@ -221,7 +205,6 @@ def payment_watcher():
         time.sleep(3)
         if not active_invoices:
             continue
-
         to_remove = []
         for invoice_id, info in list(active_invoices.items()):
             try:
@@ -231,9 +214,7 @@ def payment_watcher():
                     amount = info["amount"]
                     chat_id = info["chat_id"]
                     msg_id = info["message_id"]
-
                     add_balance(uid, amount)
-
                     users_data = load_users()
                     referrer_id = users_data.get(str(uid), {}).get("referrer_id")
                     if referrer_id:
@@ -241,45 +222,34 @@ def payment_watcher():
                         add_referral_earning(referrer_id, bonus)
                         try:
                             bot.send_message(int(referrer_id),
-                                f" Ваш реферал пополнил баланс на {amount}$!\n"
-                                f" Вам начислено: +{bonus}$")
+                                f"🎁 Ваш реферал пополнил баланс на {amount}$!\n"
+                                f"💰 Вам начислено: +{bonus}$")
                         except:
                             pass
-
-                    text = (f"✅ Оплата подтверждена!\n\n"
-                            f"Пополнено: {amount}$\n"
+                    text = (f"✅ Оплата подтверждена!\n\nПополнено: {amount}$\n"
                             f"Текущий баланс: {get_user_balance(uid)}$")
                     try:
-                        bot.edit_message_text(text, chat_id=chat_id,
-                                              message_id=msg_id, reply_markup=None)
+                        bot.edit_message_text(text, chat_id=chat_id, message_id=msg_id, reply_markup=None)
                     except:
                         try:
                             bot.send_message(chat_id, text)
                         except:
                             pass
-
                     to_remove.append(invoice_id)
-
-                elif status in ("expired", None):
-                    if status == "expired":
-                        try:
-                            bot.edit_message_text(
-                                "⏰ Счёт истёк. Создайте новый через меню баланса.",
-                                chat_id=info["chat_id"],
-                                message_id=info["message_id"],
-                                reply_markup=None
-                            )
-                        except:
-                            pass
-                        to_remove.append(invoice_id)
+                elif status == "expired":
+                    try:
+                        bot.edit_message_text("⏰ Счёт истёк. Создайте новый.",
+                            chat_id=info["chat_id"], message_id=info["message_id"], reply_markup=None)
+                    except:
+                        pass
+                    to_remove.append(invoice_id)
             except Exception as e:
-                print(f"Ошибка watcher для инвойса {invoice_id}: {e}")
-
+                print(f"Ошибка watcher: {e}")
         for inv_id in to_remove:
             active_invoices.pop(inv_id, None)
 
 
-# ========== КЛАВИАТУРЫ С ПРЕМИУМ ЭМОДЗИ ==========
+# ========== КЛАВИАТУРЫ ==========
 
 def main_menu_keyboard(user_id=None):
     keyboard = InlineKeyboardMarkup(row_width=2)
@@ -292,26 +262,18 @@ def main_menu_keyboard(user_id=None):
     )
     return keyboard
 
-
 def catalog_keyboard():
     keyboard = InlineKeyboardMarkup(row_width=2)
     products = load_products()
     for key, product in products.items():
         keyboard.add(InlineKeyboardButton(
             f"{product['emoji']} {product['name']} — {product['price']}$",
-            callback_data=f"buy_{key}",
-            icon_custom_emoji_id=EMOJI_CATALOG
+            callback_data=f"buy_{key}", icon_custom_emoji_id=EMOJI_CATALOG
         ))
-    keyboard.add(InlineKeyboardButton(
-        " Назад",
-        callback_data="back_to_menu",
-        icon_custom_emoji_id=EMOJI_BACK
-    ))
+    keyboard.add(InlineKeyboardButton(" Назад", callback_data="back_to_menu", icon_custom_emoji_id=EMOJI_BACK))
     return keyboard
 
-
 def admin_keyboard():
-    # Админ панель — без премиум эмодзи
     keyboard = InlineKeyboardMarkup(row_width=2)
     keyboard.add(
         InlineKeyboardButton("📦 Товары",            callback_data="admin_products"),
@@ -324,17 +286,49 @@ def admin_keyboard():
     )
     return keyboard
 
+# ========== НОВЫЕ КЛАВИАТУРЫ УПРАВЛЕНИЯ ТОВАРАМИ ==========
 
 def admin_products_keyboard():
     keyboard = InlineKeyboardMarkup(row_width=1)
     keyboard.add(
-        InlineKeyboardButton("➕ Добавить товар", callback_data="add_product"),
-        InlineKeyboardButton("✏️ Изменить товар", callback_data="edit_product"),
-        InlineKeyboardButton("❌ Удалить товар",  callback_data="delete_product"),
-        InlineKeyboardButton("◀️ Назад",          callback_data="admin_panel")
+        InlineKeyboardButton("➕ Добавить товар",    callback_data="add_product"),
+        InlineKeyboardButton("✏️ Управление товаром", callback_data="manage_product_list"),
+        InlineKeyboardButton("❌ Удалить товар",     callback_data="delete_product"),
+        InlineKeyboardButton("◀️ Назад",             callback_data="admin_panel")
     )
     return keyboard
 
+def manage_product_list_keyboard(action_prefix):
+    """Список товаров для выбора (универсальная)"""
+    keyboard = InlineKeyboardMarkup(row_width=1)
+    products = load_products()
+    for key, product in products.items():
+        keyboard.add(InlineKeyboardButton(
+            f"{product['emoji']} {product['name']} | {product['price']}$ | 📦{product['stock']}шт",
+            callback_data=f"{action_prefix}{key}"
+        ))
+    keyboard.add(InlineKeyboardButton(" Назад", callback_data="admin_products"))
+    return keyboard
+
+def product_manage_keyboard(product_key):
+    """Меню управления конкретным товаром"""
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        InlineKeyboardButton("➕ Добавить остаток",  callback_data=f"prod_addstock_{product_key}"),
+        InlineKeyboardButton("📦 Установить остаток", callback_data=f"prod_setstock_{product_key}"),
+        InlineKeyboardButton("💰 Изменить цену",     callback_data=f"prod_setprice_{product_key}"),
+        InlineKeyboardButton("✏️ Изменить название", callback_data=f"prod_setname_{product_key}"),
+        InlineKeyboardButton("📝 Изменить описание", callback_data=f"prod_setdesc_{product_key}"),
+        InlineKeyboardButton("🎭 Изменить эмодзи",  callback_data=f"prod_setemoji_{product_key}"),
+        InlineKeyboardButton("📋 Полное редактирование", callback_data=f"prod_full_{product_key}"),
+        InlineKeyboardButton("◀️ Назад",            callback_data="manage_product_list")
+    )
+    return keyboard
+
+def back_to_product_manage_keyboard(product_key):
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(InlineKeyboardButton("◀️ Назад к товару", callback_data=f"manage_select_{product_key}"))
+    return keyboard
 
 def admin_users_keyboard():
     keyboard = InlineKeyboardMarkup(row_width=1)
@@ -345,7 +339,6 @@ def admin_users_keyboard():
     )
     return keyboard
 
-
 def admin_deposits_keyboard():
     keyboard = InlineKeyboardMarkup(row_width=1)
     keyboard.add(
@@ -353,7 +346,6 @@ def admin_deposits_keyboard():
         InlineKeyboardButton("◀️ Назад",             callback_data="admin_panel")
     )
     return keyboard
-
 
 def referral_keyboard():
     keyboard = InlineKeyboardMarkup(row_width=2)
@@ -363,7 +355,6 @@ def referral_keyboard():
         InlineKeyboardButton(" Главное меню", callback_data="back_to_menu",  icon_custom_emoji_id=EMOJI_HOME),
     )
     return keyboard
-
 
 def my_referrals_keyboard(has_referrals=False):
     keyboard = InlineKeyboardMarkup(row_width=2)
@@ -379,16 +370,10 @@ def my_referrals_keyboard(has_referrals=False):
         )
     return keyboard
 
-
 def support_keyboard():
     keyboard = InlineKeyboardMarkup()
-    keyboard.add(InlineKeyboardButton(
-        " Назад",
-        callback_data="back_to_menu",
-        icon_custom_emoji_id=EMOJI_BACK
-    ))
+    keyboard.add(InlineKeyboardButton(" Назад", callback_data="back_to_menu", icon_custom_emoji_id=EMOJI_BACK))
     return keyboard
-
 
 def terms_keyboard():
     keyboard = InlineKeyboardMarkup(row_width=2)
@@ -398,27 +383,15 @@ def terms_keyboard():
     )
     return keyboard
 
-
 def balance_keyboard():
     keyboard = InlineKeyboardMarkup(row_width=2)
     for amount in [5, 10, 25, 50]:
         keyboard.add(InlineKeyboardButton(
-            f"💰 {amount}$",
-            callback_data=f"deposit_{amount}",
-            icon_custom_emoji_id=EMOJI_DEPOSIT
+            f" {amount}$", callback_data=f"deposit_{amount}", icon_custom_emoji_id=EMOJI_DEPOSIT
         ))
-    keyboard.add(InlineKeyboardButton(
-        "🔢 Другая сумма",
-        callback_data="deposit_custom",
-        icon_custom_emoji_id=EMOJI_CUSTOM
-    ))
-    keyboard.add(InlineKeyboardButton(
-        " Назад",
-        callback_data="back_to_menu",
-        icon_custom_emoji_id=EMOJI_BACK
-    ))
+    keyboard.add(InlineKeyboardButton(" Другая сумма", callback_data="deposit_custom", icon_custom_emoji_id=EMOJI_CUSTOM))
+    keyboard.add(InlineKeyboardButton(" Назад", callback_data="back_to_menu", icon_custom_emoji_id=EMOJI_BACK))
     return keyboard
-
 
 def payment_keyboard(invoice_url):
     keyboard = InlineKeyboardMarkup(row_width=2)
@@ -428,16 +401,10 @@ def payment_keyboard(invoice_url):
     )
     return keyboard
 
-
 def buy_product_keyboard():
     keyboard = InlineKeyboardMarkup()
-    keyboard.add(InlineKeyboardButton(
-        " В каталог",
-        callback_data="catalog",
-        icon_custom_emoji_id=EMOJI_BACK
-    ))
+    keyboard.add(InlineKeyboardButton(" В каталог", callback_data="catalog", icon_custom_emoji_id=EMOJI_BACK))
     return keyboard
-
 
 def confirm_buy_keyboard(product_key, quantity, insufficient=False):
     keyboard = InlineKeyboardMarkup(row_width=2)
@@ -449,19 +416,17 @@ def confirm_buy_keyboard(product_key, quantity, insufficient=False):
     else:
         keyboard.add(
             InlineKeyboardButton(" Купить", callback_data=f"confirm_buy_{product_key}_{quantity}", icon_custom_emoji_id=EMOJI_BUY),
-            InlineKeyboardButton(" Отмена", callback_data="cancel_buy",                            icon_custom_emoji_id=EMOJI_CANCEL),
+            InlineKeyboardButton(" Отмена", callback_data="cancel_buy", icon_custom_emoji_id=EMOJI_CANCEL),
         )
     return keyboard
-
 
 def after_buy_keyboard():
     keyboard = InlineKeyboardMarkup(row_width=2)
     keyboard.add(
-        InlineKeyboardButton(" Поддержка",   callback_data="support",     icon_custom_emoji_id=EMOJI_SUPPORT),
+        InlineKeyboardButton(" Поддержка",    callback_data="support",      icon_custom_emoji_id=EMOJI_SUPPORT),
         InlineKeyboardButton(" Главное меню", callback_data="back_to_menu", icon_custom_emoji_id=EMOJI_HOME),
     )
     return keyboard
-
 
 def cancel_buy_keyboard():
     keyboard = InlineKeyboardMarkup(row_width=2)
@@ -471,7 +436,6 @@ def cancel_buy_keyboard():
     )
     return keyboard
 
-
 def cancel_payment_keyboard():
     keyboard = InlineKeyboardMarkup(row_width=2)
     keyboard.add(
@@ -480,12 +444,10 @@ def cancel_payment_keyboard():
     )
     return keyboard
 
-
 def back_to_admin_keyboard():
     keyboard = InlineKeyboardMarkup()
     keyboard.add(InlineKeyboardButton(" Назад", callback_data="admin_panel"))
     return keyboard
-
 
 def back_to_admin_users_keyboard():
     keyboard = InlineKeyboardMarkup()
@@ -499,16 +461,14 @@ def get_profile_text(user_id, username=None):
     user_data = users.get(str(user_id), {})
     balance = user_data.get("balance", 0)
     total_bought = user_data.get("total_bought", 0)
-
-    text = f"Добро пожаловать, @{username if username else 'Пользователь'}!\n\n"
+    text  = f"Добро пожаловать, @{username if username else 'Пользователь'}!\n\n"
     text += f"╭─────────────────\n"
     text += f"├ 👤 ID: {user_id}\n"
     text += f"├ 📦 Куплено: {total_bought} акков\n"
-    text += f"├ 💰 Баланс: {balance}$\n"
+    text += f"├  Баланс: {balance}$\n"
     text += f"╰─────────────────\n\n"
-    text += f"🎮 MAX | Главное меню\n"
+    text += f" MAX | Главное меню\n"
     return text
-
 
 def send_main_menu(message):
     user_id = message.from_user.id
@@ -517,23 +477,33 @@ def send_main_menu(message):
     try:
         if os.path.exists('welcome.jpg'):
             with open('welcome.jpg', 'rb') as photo:
-                bot.send_photo(user_id, photo, caption=text,
-                               reply_markup=main_menu_keyboard(user_id))
+                bot.send_photo(user_id, photo, caption=text, reply_markup=main_menu_keyboard(user_id))
         else:
             bot.send_message(user_id, text, reply_markup=main_menu_keyboard(user_id))
-    except Exception:
+    except:
         bot.send_message(user_id, text, reply_markup=main_menu_keyboard(user_id))
-
 
 def edit_message(chat_id, message_id, text, reply_markup=None):
     try:
-        bot.edit_message_text(text, chat_id=chat_id,
-                              message_id=message_id, reply_markup=reply_markup)
+        bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=reply_markup)
     except:
         try:
             bot.send_message(chat_id, text, reply_markup=reply_markup)
         except:
             pass
+
+def product_info_text(product_key, product):
+    """Красивая карточка товара для админа"""
+    return (
+        f"📦 ТОВАР: {product['emoji']} {product['name']}\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"🔑 ID: {product_key}\n"
+        f"💰 Цена: {product['price']}$\n"
+        f"📦 Остаток: {product['stock']} шт\n"
+        f"📝 Описание: {product['description']}\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"Выберите что изменить:"
+    )
 
 
 # ========== ОБРАБОТЧИКИ КОМАНД ==========
@@ -542,12 +512,10 @@ def start_command(message):
     user_id = message.from_user.id
     username = message.from_user.username
     register_user(user_id, username)
-
     users = load_users()
     if users.get(str(user_id), {}).get("is_banned", False):
         bot.send_message(user_id, "⛔ Вы заблокированы в этом боте!")
         return
-
     args = message.text.split()
     if len(args) > 1:
         referrer_id = args[1]
@@ -561,9 +529,7 @@ def start_command(message):
             users[str(user_id)]["referrer_id"] = referrer_id
             save_users(users)
             bot.send_message(user_id, "✅ Вы были приглашены! При покупке пригласивший получит бонус.")
-
     send_main_menu(message)
-
 
 @bot.message_handler(commands=['admin'])
 def admin_command(message):
@@ -571,12 +537,10 @@ def admin_command(message):
     if str(user_id) != str(ADMIN_ID):
         bot.send_message(user_id, "⛔ Нет доступа!")
         return
-    text = ("👑 АДМИН ПАНЕЛЬ | MAX\n\n"
-            "━━━━━━━━━━━━━━━\n\n"
+    text = ("👑 АДМИН ПАНЕЛЬ | MAX\n\n━━━━━━━━━━━━━━━\n\n"
             "1 — 📦 Товары\n2 — 👥 Пользователи\n"
             "3 — 💰 Пополнения\n4 — 📢 Рассылка\n"
-            "5 — 📊 Статистика\n6 — ⚠️ Бан\n\n"
-            "━━━━━━━━━━━━━━━")
+            "5 — 📊 Статистика\n6 — ⚠️ Бан\n\n━━━━━━━━━━━━━━━")
     bot.send_message(user_id, text, reply_markup=admin_keyboard())
 
 
@@ -615,16 +579,13 @@ def callback_handler(call):
         user_data = users_data.get(str(user_id), {})
         bot_username = bot.get_me().username
         ref_link = f"https://t.me/{bot_username}?start={user_id}"
-
-        text = "💸 РЕФЕРАЛЬНЫЙ БАЛАНС\n\n"
+        text  = "💸 РЕФЕРАЛЬНЫЙ БАЛАНС\n\n"
         text += f"Ваша реферальная ссылка:\n{ref_link}\n\n"
         text += "━━━━━━━━━━━━━━━\n\n"
         text += f"👥 Приглашено: {len(user_data.get('referrals', []))}\n"
         text += f"💰 Заработано: {user_data.get('referral_earnings', 0)}$\n"
         text += f"💎 Баланс: {user_data.get('balance', 0)}$\n\n"
-        text += "━━━━━━━━━━━━━━━\n\n"
-        text += "🎁 За каждую покупку реферала вы получаете 10% от суммы."
-
+        text += "━━━━━━━━━━━━━━━\n\n🎁 За каждую покупку реферала вы получаете 10%."
         edit_message(chat_id, message_id, text, referral_keyboard())
         bot.answer_callback_query(call.id)
 
@@ -633,7 +594,6 @@ def callback_handler(call):
         user_data = users_data.get(str(user_id), {})
         referrals = user_data.get("referrals", [])
         purchases = load_purchases()
-
         if not referrals:
             text = "📊 МОИ РЕФЕРАЛЫ\n\n👥 Пока никого нет\n\nПригласите друзей!"
             edit_message(chat_id, message_id, text, my_referrals_keyboard(has_referrals=False))
@@ -656,7 +616,7 @@ def callback_handler(call):
         bot.answer_callback_query(call.id, f"Ссылка: {ref_link}", show_alert=True)
 
     elif call.data == "support":
-        text = "🆘 ПОДДЕРЖКА\n\nСвяжитесь с нами: @support_username"
+        text = " ПОДДЕРЖКА\n\nСвяжитесь с нами: @support_username"
         edit_message(chat_id, message_id, text, support_keyboard())
         bot.answer_callback_query(call.id)
 
@@ -788,31 +748,25 @@ def callback_handler(call):
         edit_message(chat_id, message_id, text, balance_keyboard())
         bot.answer_callback_query(call.id)
 
-    # ========== ПОКУПКА ТОВАРОВ ==========
+    # ========== ПОКУПКА ==========
     elif call.data.startswith("buy_"):
         product_key = call.data[4:]
         products = load_products()
-
         if product_key not in products:
             bot.answer_callback_query(call.id, "Товар не найден", show_alert=True)
             return
-
         product = products[product_key]
-
         if product["stock"] <= 0:
             bot.answer_callback_query(call.id, "❌ Товар закончился!", show_alert=True)
             return
-
         balance = get_user_balance(user_id)
         text = (f"{product['emoji']} {product['name']} | {product['price']}$ за шт\n\n"
                 f"📦 В наличии: {product['stock']} шт\n"
-                f"💰 Ваш баланс: {balance}$\n\n"
+                f" Ваш баланс: {balance}$\n\n"
                 f"━━━━━━━━━━━━━━━\n\n"
                 f"Введите количество (1–{product['stock']}):\n➡️ Например: 1")
-
         edit_message(chat_id, message_id, text, buy_product_keyboard())
         bot.answer_callback_query(call.id)
-
         user_states[user_id] = {
             "awaiting_quantity": True,
             "product_key": product_key,
@@ -821,88 +775,59 @@ def callback_handler(call):
             "message_id": message_id
         }
 
-    # ========== ПОДТВЕРЖДЕНИЕ ПОКУПКИ ==========
     elif call.data.startswith("confirm_buy_"):
         parts = call.data.split("_")
         product_key = parts[2]
         quantity = int(parts[3])
         products = load_products()
-
         if product_key not in products:
             bot.answer_callback_query(call.id, "Товар не найден", show_alert=True)
             return
-
         product = products[product_key]
         total_price = round(product["price"] * quantity, 2)
         balance = get_user_balance(user_id)
-
         if balance < total_price:
-            bot.answer_callback_query(
-                call.id,
-                f"❌ Недостаточно средств! Нужно {total_price}$, у вас {balance}$",
-                show_alert=True
-            )
+            bot.answer_callback_query(call.id, f"❌ Недостаточно средств!", show_alert=True)
             return
-
         if product["stock"] < quantity:
-            bot.answer_callback_query(
-                call.id,
-                f"❌ В наличии только {product['stock']} шт!",
-                show_alert=True
-            )
+            bot.answer_callback_query(call.id, f"❌ В наличии только {product['stock']} шт!", show_alert=True)
             return
-
         if not deduct_balance(user_id, total_price):
             bot.answer_callback_query(call.id, "❌ Ошибка списания средств!", show_alert=True)
             return
-
         products[product_key]["stock"] -= quantity
         save_products(products)
-
         purchases = load_purchases()
         if str(user_id) not in purchases:
             purchases[str(user_id)] = []
         purchases[str(user_id)].append({
-            "product": product_key,
-            "quantity": quantity,
-            "amount": total_price,
-            "date": str(datetime.now())
+            "product": product_key, "quantity": quantity,
+            "amount": total_price, "date": str(datetime.now())
         })
         save_purchases(purchases)
-
         users_data = load_users()
-        users_data[str(user_id)]["total_bought"] = (
-            users_data[str(user_id)].get("total_bought", 0) + quantity
-        )
+        users_data[str(user_id)]["total_bought"] = users_data[str(user_id)].get("total_bought", 0) + quantity
         save_users(users_data)
-
         referrer_id = users_data.get(str(user_id), {}).get("referrer_id")
         if referrer_id:
             bonus = round(total_price * 0.1, 2)
             add_referral_earning(referrer_id, bonus)
             try:
                 bot.send_message(int(referrer_id),
-                    f"🎁 Ваш реферал купил {product['name']} x{quantity}!\n"
-                    f"💰 Вам начислено: +{bonus}$")
+                    f"🎁 Ваш реферал купил {product['name']} x{quantity}!\n💰 Вам начислено: +{bonus}$")
             except:
                 pass
-
         try:
             bot.send_message(ADMIN_ID,
-                f"🛒 НОВАЯ ПОКУПКА!\n\n"
-                f"👤 Пользователь: ID{user_id} @{username}\n"
-                f"📦 Товар: {product['emoji']} {product['name']} x{quantity}\n"
-                f"💰 Сумма: {total_price}$")
+                f"🛒 НОВАЯ ПОКУПКА!\n\n👤 ID{user_id} @{username}\n"
+                f"📦 {product['emoji']} {product['name']} x{quantity}\n💰 Сумма: {total_price}$")
         except:
             pass
-
         text = (f"✅ ПОКУПКА УСПЕШНА!\n\n"
                 f"Товар: {product['emoji']} {product['name']}\n"
-                f"Количество: {quantity} шт\n"
-                f"Сумма: {total_price}$\n"
+                f"Количество: {quantity} шт\nСумма: {total_price}$\n"
                 f"Остаток баланса: {get_user_balance(user_id)}$\n\n"
                 f"Обратитесь в поддержку для получения товара.")
-
         edit_message(chat_id, message_id, text, after_buy_keyboard())
         bot.answer_callback_query(call.id, "✅ Покупка успешна!", show_alert=True)
 
@@ -911,7 +836,7 @@ def callback_handler(call):
         edit_message(chat_id, message_id, "❌ Покупка отменена.", cancel_buy_keyboard())
         bot.answer_callback_query(call.id)
 
-    # ========== ПОПОЛНЕНИЕ БАЛАНСА ==========
+    # ========== ПОПОЛНЕНИЕ ==========
     elif call.data == "deposit_custom":
         text = "💰 ПОПОЛНЕНИЕ БАЛАНСА\n\nВведите сумму (от 1$ до 5000$):"
         bot.send_message(user_id, text)
@@ -928,24 +853,21 @@ def callback_handler(call):
         bot.answer_callback_query(call.id)
 
     elif call.data == "cancel_payment":
-        to_remove = [inv_id for inv_id, info in active_invoices.items()
-                     if info["user_id"] == user_id]
+        to_remove = [inv_id for inv_id, info in active_invoices.items() if info["user_id"] == user_id]
         for inv_id in to_remove:
             active_invoices.pop(inv_id, None)
         edit_message(chat_id, message_id, "❌ Платёж отменён.", cancel_payment_keyboard())
         bot.answer_callback_query(call.id)
 
-    # ========== АДМИН ПАНЕЛЬ (без премиум эмодзи) ==========
+    # ========== АДМИН ПАНЕЛЬ ==========
     elif call.data == "admin_panel":
         if str(user_id) != str(ADMIN_ID):
             bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
             return
-        text = ("👑 АДМИН ПАНЕЛЬ | MAX\n\n"
-                "━━━━━━━━━━━━━━━\n\n"
+        text = ("👑 АДМИН ПАНЕЛЬ | MAX\n\n━━━━━━━━━━━━━━━\n\n"
                 "1 — 📦 Товары\n2 — 👥 Пользователи\n"
                 "3 — 💰 Пополнения\n4 — 📢 Рассылка\n"
-                "5 — 📊 Статистика\n6 — ⚠️ Бан\n\n"
-                "━━━━━━━━━━━━━━━")
+                "5 — 📊 Статистика\n6 — ⚠️ Бан\n\n━━━━━━━━━━━━━━━")
         edit_message(chat_id, message_id, text, admin_keyboard())
         bot.answer_callback_query(call.id)
 
@@ -953,9 +875,12 @@ def callback_handler(call):
         if str(user_id) != str(ADMIN_ID):
             bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
             return
-        edit_message(chat_id, message_id,
-                     "📦 УПРАВЛЕНИЕ ТОВАРАМИ\n\nВыберите действие:",
-                     admin_products_keyboard())
+        products = load_products()
+        text = "📦 УПРАВЛЕНИЕ ТОВАРАМИ\n\n"
+        for key, p in products.items():
+            text += f"{p['emoji']} {p['name']} | 💰{p['price']}$ | 📦{p['stock']}шт\n"
+        text += "\n━━━━━━━━━━━━━━━\nВыберите действие:"
+        edit_message(chat_id, message_id, text, admin_products_keyboard())
         bot.answer_callback_query(call.id)
 
     elif call.data == "add_product":
@@ -964,78 +889,186 @@ def callback_handler(call):
             return
         bot.send_message(user_id,
             "➕ ДОБАВЛЕНИЕ ТОВАРА\n\nФормат:\n`id|название|цена|количество|эмодзи|описание`\n\n"
-            "Пример:\n`new_token|Новый Токен|5|10|⭐|Описание`",
+            "Пример:\n`new_token|Новый Токен|5|10|⭐|Описание товара`",
             parse_mode="Markdown")
         user_states[user_id] = {"awaiting_add_product": True}
         bot.answer_callback_query(call.id)
 
-    elif call.data == "edit_product":
+    # ——— Список товаров для управления ———
+    elif call.data == "manage_product_list":
         if str(user_id) != str(ADMIN_ID):
             bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
             return
+        edit_message(chat_id, message_id,
+            "✏️ ВЫБЕРИТЕ ТОВАР ДЛЯ УПРАВЛЕНИЯ:",
+            manage_product_list_keyboard("manage_select_"))
+        bot.answer_callback_query(call.id)
+
+    # ——— Карточка товара ———
+    elif call.data.startswith("manage_select_"):
+        if str(user_id) != str(ADMIN_ID):
+            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
+            return
+        product_key = call.data[len("manage_select_"):]
         products = load_products()
-        keyboard = InlineKeyboardMarkup(row_width=1)
-        text = "✏️ ИЗМЕНЕНИЕ ТОВАРА\n\nВыберите товар:\n\n"
-        for key, product in products.items():
-            text += f"{product['emoji']} {product['name']} (ID: {key}) — {product['stock']} шт\n"
-            keyboard.add(InlineKeyboardButton(
-                f"{product['emoji']} {product['name']}", callback_data=f"edit_select_{key}"))
-        keyboard.add(InlineKeyboardButton("◀️ Назад", callback_data="admin_products"))
-        edit_message(chat_id, message_id, text, keyboard)
+        if product_key not in products:
+            bot.answer_callback_query(call.id, "Товар не найден", show_alert=True)
+            return
+        product = products[product_key]
+        edit_message(chat_id, message_id,
+            product_info_text(product_key, product),
+            product_manage_keyboard(product_key))
         bot.answer_callback_query(call.id)
 
-    elif call.data.startswith("edit_select_"):
+    # ——— ДОБАВИТЬ остаток ———
+    elif call.data.startswith("prod_addstock_"):
         if str(user_id) != str(ADMIN_ID):
             bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
             return
-        product_key = call.data[12:]
-        user_states[user_id] = {"awaiting_edit_product": product_key}
+        product_key = call.data[len("prod_addstock_"):]
+        products = load_products()
+        product = products.get(product_key)
         bot.send_message(user_id,
-            f"✏️ РЕДАКТИРОВАНИЕ: {product_key}\n\n"
-            "Формат:\n`название|цена|количество|эмодзи|описание`\n\n"
-            "Пример:\n`Новый Токен|5|10|⭐|Новое описание`",
-            parse_mode="Markdown")
+            f"➕ ДОБАВИТЬ ОСТАТОК\n\n"
+            f"Товар: {product['emoji']} {product['name']}\n"
+            f"Текущий остаток: {product['stock']} шт\n\n"
+            f"Введите сколько добавить:")
+        user_states[user_id] = {"prod_addstock": product_key, "chat_id": chat_id, "message_id": message_id}
         bot.answer_callback_query(call.id)
 
+    # ——— УСТАНОВИТЬ остаток ———
+    elif call.data.startswith("prod_setstock_"):
+        if str(user_id) != str(ADMIN_ID):
+            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
+            return
+        product_key = call.data[len("prod_setstock_"):]
+        products = load_products()
+        product = products.get(product_key)
+        bot.send_message(user_id,
+            f"📦 УСТАНОВИТЬ ОСТАТОК\n\n"
+            f"Товар: {product['emoji']} {product['name']}\n"
+            f"Текущий остаток: {product['stock']} шт\n\n"
+            f"Введите новое количество:")
+        user_states[user_id] = {"prod_setstock": product_key, "chat_id": chat_id, "message_id": message_id}
+        bot.answer_callback_query(call.id)
+
+    # ——— ИЗМЕНИТЬ цену ———
+    elif call.data.startswith("prod_setprice_"):
+        if str(user_id) != str(ADMIN_ID):
+            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
+            return
+        product_key = call.data[len("prod_setprice_"):]
+        products = load_products()
+        product = products.get(product_key)
+        bot.send_message(user_id,
+            f"💰 ИЗМЕНИТЬ ЦЕНУ\n\n"
+            f"Товар: {product['emoji']} {product['name']}\n"
+            f"Текущая цена: {product['price']}$\n\n"
+            f"Введите новую цену (например: 3.50):")
+        user_states[user_id] = {"prod_setprice": product_key, "chat_id": chat_id, "message_id": message_id}
+        bot.answer_callback_query(call.id)
+
+    # ——— ИЗМЕНИТЬ название ———
+    elif call.data.startswith("prod_setname_"):
+        if str(user_id) != str(ADMIN_ID):
+            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
+            return
+        product_key = call.data[len("prod_setname_"):]
+        products = load_products()
+        product = products.get(product_key)
+        bot.send_message(user_id,
+            f"✏️ ИЗМЕНИТЬ НАЗВАНИЕ\n\n"
+            f"Товар: {product['emoji']} {product['name']}\n\n"
+            f"Введите новое название:")
+        user_states[user_id] = {"prod_setname": product_key, "chat_id": chat_id, "message_id": message_id}
+        bot.answer_callback_query(call.id)
+
+    # ——— ИЗМЕНИТЬ описание ———
+    elif call.data.startswith("prod_setdesc_"):
+        if str(user_id) != str(ADMIN_ID):
+            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
+            return
+        product_key = call.data[len("prod_setdesc_"):]
+        products = load_products()
+        product = products.get(product_key)
+        bot.send_message(user_id,
+            f"📝 ИЗМЕНИТЬ ОПИСАНИЕ\n\n"
+            f"Товар: {product['emoji']} {product['name']}\n"
+            f"Текущее: {product['description']}\n\n"
+            f"Введите новое описание:")
+        user_states[user_id] = {"prod_setdesc": product_key, "chat_id": chat_id, "message_id": message_id}
+        bot.answer_callback_query(call.id)
+
+    # ——— ИЗМЕНИТЬ эмодзи ———
+    elif call.data.startswith("prod_setemoji_"):
+        if str(user_id) != str(ADMIN_ID):
+            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
+            return
+        product_key = call.data[len("prod_setemoji_"):]
+        products = load_products()
+        product = products.get(product_key)
+        bot.send_message(user_id,
+            f"🎭 ИЗМЕНИТЬ ЭМОДЗИ\n\n"
+            f"Товар: {product['emoji']} {product['name']}\n\n"
+            f"Введите новый эмодзи:")
+        user_states[user_id] = {"prod_setemoji": product_key, "chat_id": chat_id, "message_id": message_id}
+        bot.answer_callback_query(call.id)
+
+    # ——— ПОЛНОЕ редактирование ———
+    elif call.data.startswith("prod_full_"):
+        if str(user_id) != str(ADMIN_ID):
+            bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
+            return
+        product_key = call.data[len("prod_full_"):]
+        products = load_products()
+        product = products.get(product_key)
+        bot.send_message(user_id,
+            f"📋 ПОЛНОЕ РЕДАКТИРОВАНИЕ\n\n"
+            f"Товар: {product['emoji']} {product['name']}\n\n"
+            f"Формат: `название|цена|количество|эмодзи|описание`\n\n"
+            f"Пример:\n`Новый Токен|5.00|10|⭐|Новое описание`",
+            parse_mode="Markdown")
+        user_states[user_id] = {"awaiting_edit_product": product_key, "chat_id": chat_id, "message_id": message_id}
+        bot.answer_callback_query(call.id)
+
+    # ——— Удаление товаров ———
     elif call.data == "delete_product":
         if str(user_id) != str(ADMIN_ID):
             bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
             return
-        products = load_products()
-        keyboard = InlineKeyboardMarkup(row_width=1)
-        text = "❌ УДАЛЕНИЕ ТОВАРА\n\nВыберите товар:\n\n"
-        for key, product in products.items():
-            text += f"{product['emoji']} {product['name']} (ID: {key})\n"
-            keyboard.add(InlineKeyboardButton(
-                f"❌ {product['emoji']} {product['name']}", callback_data=f"delete_select_{key}"))
-        keyboard.add(InlineKeyboardButton("◀️ Назад", callback_data="admin_products"))
-        edit_message(chat_id, message_id, text, keyboard)
+        edit_message(chat_id, message_id,
+            "❌ УДАЛЕНИЕ ТОВАРА\n\nВыберите товар:",
+            manage_product_list_keyboard("delete_select_"))
         bot.answer_callback_query(call.id)
 
     elif call.data.startswith("delete_select_"):
         if str(user_id) != str(ADMIN_ID):
             bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
             return
-        product_key = call.data[14:]
+        product_key = call.data[len("delete_select_"):]
         products = load_products()
         if product_key in products:
+            name = products[product_key]['name']
             del products[product_key]
             save_products(products)
-            bot.send_message(user_id, f"✅ Товар удалён!")
+            bot.answer_callback_query(call.id, f"✅ Товар '{name}' удалён!", show_alert=True)
         else:
-            bot.send_message(user_id, "❌ Товар не найден!")
-        bot.answer_callback_query(call.id)
-        edit_message(chat_id, message_id,
-                     "📦 УПРАВЛЕНИЕ ТОВАРАМИ\n\nВыберите действие:",
-                     admin_products_keyboard())
+            bot.answer_callback_query(call.id, "❌ Товар не найден!", show_alert=True)
+        # Обновляем список
+        products = load_products()
+        text = "📦 УПРАВЛЕНИЕ ТОВАРАМИ\n\n"
+        for key, p in products.items():
+            text += f"{p['emoji']} {p['name']} | 💰{p['price']}$ | 📦{p['stock']}шт\n"
+        text += "\n━━━━━━━━━━━━━━━\nВыберите действие:"
+        edit_message(chat_id, message_id, text, admin_products_keyboard())
 
     elif call.data == "admin_users":
         if str(user_id) != str(ADMIN_ID):
             bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
             return
         edit_message(chat_id, message_id,
-                     "👥 УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ\n\nВыберите действие:",
-                     admin_users_keyboard())
+            "👥 УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ\n\nВыберите действие:",
+            admin_users_keyboard())
         bot.answer_callback_query(call.id)
 
     elif call.data == "admin_user_list":
@@ -1066,8 +1099,8 @@ def callback_handler(call):
             bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
             return
         edit_message(chat_id, message_id,
-                     "💰 УПРАВЛЕНИЕ ПОПОЛНЕНИЯМИ\n\nВыберите действие:",
-                     admin_deposits_keyboard())
+            "💰 УПРАВЛЕНИЕ ПОПОЛНЕНИЯМИ\n\nВыберите действие:",
+            admin_deposits_keyboard())
         bot.answer_callback_query(call.id)
 
     elif call.data == "admin_manual_deposit":
@@ -1095,23 +1128,18 @@ def callback_handler(call):
         users_data = load_users()
         purchases = load_purchases()
         products = load_products()
-
         total_users = len(users_data)
         banned_users = sum(1 for u in users_data.values() if u.get("is_banned", False))
         total_purchases = sum(len(p) for p in purchases.values())
         total_income = sum(p.get("amount", 0) for p_list in purchases.values() for p in p_list)
-
-        text = (f"📊 СТАТИСТИКА\n\n"
-                f"━━━━━━━━━━━━━━━\n"
+        text = (f"📊 СТАТИСТИКА\n\n━━━━━━━━━━━━━━━\n"
                 f"👥 Пользователей: {total_users}\n"
                 f"🚫 Заблокировано: {banned_users}\n"
                 f"📦 Покупок: {total_purchases}\n"
                 f"💰 Доход: {round(total_income, 2)}$\n"
-                f"━━━━━━━━━━━━━━━\n\n"
-                f"📦 ОСТАТКИ:\n")
+                f"━━━━━━━━━━━━━━━\n\n📦 ОСТАТКИ:\n")
         for key, product in products.items():
-            text += f"{product['emoji']} {product['name']}: {product['stock']} шт\n"
-
+            text += f"{product['emoji']} {product['name']}: {product['stock']} шт | {product['price']}$\n"
         edit_message(chat_id, message_id, text, back_to_admin_keyboard())
         bot.answer_callback_query(call.id)
 
@@ -1119,8 +1147,7 @@ def callback_handler(call):
         if str(user_id) != str(ADMIN_ID):
             bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
             return
-        bot.send_message(user_id,
-            "⚠️ БАН/РАЗБАН\n\nВведите ID пользователя:\n\n(Для отмены: /cancel)")
+        bot.send_message(user_id, "⚠️ БАН/РАЗБАН\n\nВведите ID пользователя:\n\n(Для отмены: /cancel)")
         user_states[user_id] = {"awaiting_ban": True}
         bot.answer_callback_query(call.id)
 
@@ -1142,46 +1169,37 @@ def handle_message(message):
 
     state = user_states.get(user_id, {})
 
-    # ===== Ввод количества товара при покупке =====
+    # ===== Количество товара при покупке =====
     if state.get("awaiting_quantity"):
         product_key = state["product_key"]
         product = state["product"]
         chat_id = state.get("chat_id", user_id)
         msg_id = state.get("message_id")
-
         if not text.isdigit() or int(text) <= 0:
             bot.send_message(user_id, "❌ Введите целое положительное число!")
             return
-
         quantity = int(text)
         products = load_products()
         product = products.get(product_key, product)
-
         if quantity > product["stock"]:
             bot.send_message(user_id, f"❌ В наличии только {product['stock']} шт!")
             return
-
         total_price = round(product["price"] * quantity, 2)
         balance = get_user_balance(user_id)
-
         confirm_text = (
-            f"🛒 ПОДТВЕРЖДЕНИЕ ПОКУПКИ\n\n"
+            f" ПОДТВЕРЖДЕНИЕ ПОКУПКИ\n\n"
             f"Товар: {product['emoji']} {product['name']}\n"
-            f"Количество: {quantity} шт\n"
-            f"Цена за шт: {product['price']}$\n"
+            f"Количество: {quantity} шт\nЦена за шт: {product['price']}$\n"
             f"Итого: {total_price}$\n\n"
             f"💰 Ваш баланс: {balance}$\n"
             f"💰 После покупки: {round(balance - total_price, 2)}$\n\n"
         )
-
         insufficient = balance < total_price
         if insufficient:
             confirm_text += f"❌ Недостаточно средств! Нужно ещё {round(total_price - balance, 2)}$"
         else:
             confirm_text += "Подтвердить покупку?"
-
         del user_states[user_id]
-
         try:
             if msg_id:
                 bot.edit_message_text(confirm_text, chat_id=chat_id, message_id=msg_id,
@@ -1207,7 +1225,148 @@ def handle_message(message):
             bot.send_message(user_id, "❌ Введите числовую сумму (например: 15.50)")
         return
 
-    # ===== Добавление товара =====
+    # ===== Добавить остаток товара =====
+    if state.get("prod_addstock"):
+        product_key = state["prod_addstock"]
+        s_chat_id = state.get("chat_id", chat_id if 'chat_id' in dir() else user_id)
+        s_msg_id = state.get("message_id")
+        if not text.isdigit() or int(text) <= 0:
+            bot.send_message(user_id, "❌ Введите целое положительное число!")
+            return
+        add_amount = int(text)
+        products = load_products()
+        products[product_key]["stock"] += add_amount
+        save_products(products)
+        del user_states[user_id]
+        product = products[product_key]
+        bot.send_message(user_id, f"✅ Добавлено +{add_amount} шт!\nТеперь в наличии: {product['stock']} шт")
+        try:
+            bot.edit_message_text(
+                product_info_text(product_key, product),
+                chat_id=s_chat_id, message_id=s_msg_id,
+                reply_markup=product_manage_keyboard(product_key))
+        except:
+            pass
+        return
+
+    # ===== Установить остаток =====
+    if state.get("prod_setstock"):
+        product_key = state["prod_setstock"]
+        s_chat_id = state.get("chat_id", user_id)
+        s_msg_id = state.get("message_id")
+        if not text.isdigit() or int(text) < 0:
+            bot.send_message(user_id, "❌ Введите неотрицательное целое число!")
+            return
+        new_stock = int(text)
+        products = load_products()
+        old_stock = products[product_key]["stock"]
+        products[product_key]["stock"] = new_stock
+        save_products(products)
+        del user_states[user_id]
+        product = products[product_key]
+        bot.send_message(user_id, f"✅ Остаток обновлён: {old_stock} → {new_stock} шт")
+        try:
+            bot.edit_message_text(
+                product_info_text(product_key, product),
+                chat_id=s_chat_id, message_id=s_msg_id,
+                reply_markup=product_manage_keyboard(product_key))
+        except:
+            pass
+        return
+
+    # ===== Установить цену =====
+    if state.get("prod_setprice"):
+        product_key = state["prod_setprice"]
+        s_chat_id = state.get("chat_id", user_id)
+        s_msg_id = state.get("message_id")
+        try:
+            new_price = float(text.replace(",", "."))
+            if new_price <= 0:
+                raise ValueError
+        except ValueError:
+            bot.send_message(user_id, "❌ Введите корректную цену (например: 3.50)")
+            return
+        products = load_products()
+        old_price = products[product_key]["price"]
+        products[product_key]["price"] = round(new_price, 2)
+        save_products(products)
+        del user_states[user_id]
+        product = products[product_key]
+        bot.send_message(user_id, f"✅ Цена обновлена: {old_price}$ → {new_price}$")
+        try:
+            bot.edit_message_text(
+                product_info_text(product_key, product),
+                chat_id=s_chat_id, message_id=s_msg_id,
+                reply_markup=product_manage_keyboard(product_key))
+        except:
+            pass
+        return
+
+    # ===== Установить название =====
+    if state.get("prod_setname"):
+        product_key = state["prod_setname"]
+        s_chat_id = state.get("chat_id", user_id)
+        s_msg_id = state.get("message_id")
+        if not text:
+            bot.send_message(user_id, "❌ Введите название!")
+            return
+        products = load_products()
+        old_name = products[product_key]["name"]
+        products[product_key]["name"] = text
+        save_products(products)
+        del user_states[user_id]
+        product = products[product_key]
+        bot.send_message(user_id, f"✅ Название обновлено: '{old_name}' → '{text}'")
+        try:
+            bot.edit_message_text(
+                product_info_text(product_key, product),
+                chat_id=s_chat_id, message_id=s_msg_id,
+                reply_markup=product_manage_keyboard(product_key))
+        except:
+            pass
+        return
+
+    # ===== Установить описание =====
+    if state.get("prod_setdesc"):
+        product_key = state["prod_setdesc"]
+        s_chat_id = state.get("chat_id", user_id)
+        s_msg_id = state.get("message_id")
+        products = load_products()
+        products[product_key]["description"] = text
+        save_products(products)
+        del user_states[user_id]
+        product = products[product_key]
+        bot.send_message(user_id, "✅ Описание обновлено!")
+        try:
+            bot.edit_message_text(
+                product_info_text(product_key, product),
+                chat_id=s_chat_id, message_id=s_msg_id,
+                reply_markup=product_manage_keyboard(product_key))
+        except:
+            pass
+        return
+
+    # ===== Установить эмодзи =====
+    if state.get("prod_setemoji"):
+        product_key = state["prod_setemoji"]
+        s_chat_id = state.get("chat_id", user_id)
+        s_msg_id = state.get("message_id")
+        products = load_products()
+        products[product_key]["emoji"] = text
+        save_products(products)
+        del user_states[user_id]
+        product = products[product_key]
+        bot.send_message(user_id, f"✅ Эмодзи обновлён: {text}")
+        try:
+            bot.edit_message_text(
+                product_info_text(product_key, product),
+                chat_id=s_chat_id, message_id=s_msg_id,
+                reply_markup=product_manage_keyboard(product_key))
+        except:
+            pass
+        return
+
+    # ===== Добавление нового товара =====
     if state.get("awaiting_add_product"):
         try:
             data = [d.strip() for d in text.split("|")]
@@ -1222,16 +1381,19 @@ def handle_message(message):
                 "price": price, "stock": stock, "description": description
             }
             save_products(products)
-            bot.send_message(user_id, f"✅ Товар '{name}' добавлен!")
+            bot.send_message(user_id, f"✅ Товар '{name}' добавлен!\n\n"
+                f"{emoji} {name} | {price}$ | {stock} шт")
         except Exception as e:
             bot.send_message(user_id, f"❌ Ошибка: {e}\n\nФормат: id|название|цена|кол-во|эмодзи|описание")
         del user_states[user_id]
         send_main_menu(message)
         return
 
-    # ===== Редактирование товара =====
+    # ===== Полное редактирование товара =====
     if "awaiting_edit_product" in state:
         product_key = state["awaiting_edit_product"]
+        s_chat_id = state.get("chat_id", user_id)
+        s_msg_id = state.get("message_id")
         try:
             data = [d.strip() for d in text.split("|")]
             if len(data) < 5:
@@ -1245,13 +1407,19 @@ def handle_message(message):
                     "stock": stock, "emoji": emoji, "description": description
                 })
                 save_products(products)
-                bot.send_message(user_id, f"✅ Товар обновлён!")
+                bot.send_message(user_id, f"✅ Товар полностью обновлён!")
+                try:
+                    bot.edit_message_text(
+                        product_info_text(product_key, products[product_key]),
+                        chat_id=s_chat_id, message_id=s_msg_id,
+                        reply_markup=product_manage_keyboard(product_key))
+                except:
+                    pass
             else:
                 bot.send_message(user_id, "❌ Товар не найден!")
         except Exception as e:
             bot.send_message(user_id, f"❌ Ошибка: {e}\n\nФормат: название|цена|кол-во|эмодзи|описание")
         del user_states[user_id]
-        send_main_menu(message)
         return
 
     # ===== Поиск пользователя =====
@@ -1260,7 +1428,6 @@ def handle_message(message):
         users_data = load_users()
         found = None
         found_id = None
-
         if search.isdigit():
             found = users_data.get(search)
             found_id = search
@@ -1270,7 +1437,6 @@ def handle_message(message):
                     found = u_data
                     found_id = uid
                     break
-
         if found:
             result = (f"👤 ПОЛЬЗОВАТЕЛЬ НАЙДЕН\n\n"
                       f"ID: {found.get('user_id')}\n"
@@ -1283,7 +1449,6 @@ def handle_message(message):
                       f"📅 Зарегистрирован: {found.get('registered_at', 'неизвестно')}")
         else:
             result = f"❌ Пользователь '{text}' не найден!"
-
         bot.send_message(user_id, result)
         del user_states[user_id]
         send_main_menu(message)
@@ -1299,8 +1464,7 @@ def handle_message(message):
             bot.send_message(user_id, f"✅ Зачислено {amount}$ пользователю ID:{target_id}")
             try:
                 bot.send_message(target_id,
-                    f"💰 Вам зачислено {amount}$!\n"
-                    f"Текущий баланс: {get_user_balance(target_id)}$")
+                    f"💰 Вам зачислено {amount}$!\nТекущий баланс: {get_user_balance(target_id)}$")
             except:
                 pass
         except Exception as e:
@@ -1321,13 +1485,12 @@ def handle_message(message):
                 time.sleep(0.05)
             except:
                 fail += 1
-        bot.send_message(user_id,
-            f"✅ Рассылка завершена!\n📨 Доставлено: {success}\n❌ Ошибок: {fail}")
+        bot.send_message(user_id, f"✅ Рассылка завершена!\n📨 Доставлено: {success}\n❌ Ошибок: {fail}")
         del user_states[user_id]
         send_main_menu(message)
         return
 
-    # ===== Бан пользователя =====
+    # ===== Бан =====
     if state.get("awaiting_ban"):
         try:
             target_id = int(text)
@@ -1340,8 +1503,8 @@ def handle_message(message):
                 bot.send_message(user_id, f"✅ Пользователь ID:{target_id} {action}!")
                 try:
                     bot.send_message(target_id,
-                        f"⛔ Вы {action} в боте!" if not current
-                        else f"✅ Вы {action} в боте!")
+                        f"⛔ Вы заблокированы в боте!" if not current
+                        else f"✅ Вы разблокированы в боте!")
                 except:
                     pass
             else:
@@ -1358,23 +1521,16 @@ def handle_message(message):
 # ========== СОЗДАНИЕ ПЛАТЕЖА ==========
 def process_payment(chat_id, user_id, amount, edit_msg_id=None):
     invoice_id, invoice_url = create_invoice(amount, user_id)
-
     if not invoice_url:
         bot.send_message(user_id, "❌ Ошибка создания платежа. Попробуйте позже.")
         return
-
-    text = (f"💰 ПОПОЛНЕНИЕ БАЛАНСА\n\n"
-            f"Сумма: {amount}$\n"
-            f"Валюта: USDT\n\n"
+    text = (f"💰 ПОПОЛНЕНИЕ БАЛАНСА\n\nСумма: {amount}$\nВалюта: USDT\n\n"
             f"Нажмите «Оплатить» и завершите оплату в CryptoBot.\n"
             f"Баланс пополнится автоматически в течение нескольких секунд.")
-
     kb = payment_keyboard(invoice_url)
-
     if edit_msg_id:
         try:
-            bot.edit_message_text(text, chat_id=chat_id,
-                                  message_id=edit_msg_id, reply_markup=kb)
+            bot.edit_message_text(text, chat_id=chat_id, message_id=edit_msg_id, reply_markup=kb)
             msg_id = edit_msg_id
         except:
             sent = bot.send_message(chat_id, text, reply_markup=kb)
@@ -1382,23 +1538,18 @@ def process_payment(chat_id, user_id, amount, edit_msg_id=None):
     else:
         sent = bot.send_message(chat_id, text, reply_markup=kb)
         msg_id = sent.message_id
-
     if invoice_id:
         active_invoices[invoice_id] = {
-            "user_id": user_id,
-            "amount": amount,
-            "chat_id": chat_id,
-            "message_id": msg_id
+            "user_id": user_id, "amount": amount,
+            "chat_id": chat_id, "message_id": msg_id
         }
 
 
-# ========== ЗАПУСК БОТА ==========
+# ========== ЗАПУСК ==========
 if __name__ == "__main__":
     init_files()
-
     watcher_thread = threading.Thread(target=payment_watcher, daemon=True)
     watcher_thread.start()
-
     print("=" * 50)
     print("🤖 БОТ ЗАПУЩЕН")
     print("=" * 50)
@@ -1406,7 +1557,6 @@ if __name__ == "__main__":
     print(f"👑 Админ ID: {ADMIN_ID}")
     print(f"🔄 Авто-проверка оплаты: каждые 3 сек")
     print("=" * 50)
-
     while True:
         try:
             bot.polling(none_stop=True, interval=1, timeout=60)
