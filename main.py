@@ -31,22 +31,22 @@ user_states = {}
 active_invoices = {}
 
 # ========== ПРЕМИУМ ЭМОДЗИ ID ==========
-EMOJI_CATALOG   = "6030537810509828330"
-EMOJI_REFERRAL  = "6030537810509828330"
-EMOJI_SUPPORT   = "6030537810509828330"
-EMOJI_TERMS     = "6030537810509828330"
-EMOJI_BALANCE   = "6030537810509828330"
-EMOJI_BACK      = "6030537810509828330"
-EMOJI_PAY       = "6030537810509828330"
-EMOJI_CANCEL    = "6030537810509828330"
-EMOJI_REF_LINK  = "6030537810509828330"
-EMOJI_REF_STATS = "6030537810509828330"
-EMOJI_HOME      = "6030537810509828330"
-EMOJI_INVITE    = "6030537810509828330"
-EMOJI_BUY       = "6030537810509828330"
-EMOJI_DEPOSIT   = "6030537810509828330"
-EMOJI_CUSTOM    = "6030537810509828330"
-EMOJI_AGREE     = "6030537810509828330"
+EMOJI_CATALOG   = "5445221832074483553"
+EMOJI_REFERRAL  = "5332724926216428039"
+EMOJI_SUPPORT   = "5201691993775818138"
+EMOJI_TERMS     = "5444856076954520455"
+EMOJI_BALANCE   = "5312123810638483121"
+EMOJI_BACK      = "6039539366177541657"
+EMOJI_PAY       = "6030776052345737530"
+EMOJI_CANCEL    = "6039539366177541657"
+EMOJI_REF_LINK  = "5260730055880876557"
+EMOJI_REF_STATS = "5258330865674494479"
+EMOJI_HOME      = "5260399854500191689"
+EMOJI_INVITE    = "5258513401784573443"
+EMOJI_BUY       = "5258185631355378853"
+EMOJI_DEPOSIT   = "6039496266180726678"
+EMOJI_CUSTOM    = "6039496266180726678"
+EMOJI_AGREE     = "6041720006973067267"
 
 
 # ========== ИНИЦИАЛИЗАЦИЯ БАЗ ДАННЫХ ==========
@@ -241,8 +241,8 @@ def payment_watcher():
                         add_referral_earning(referrer_id, bonus)
                         try:
                             bot.send_message(int(referrer_id),
-                                f"🎁 Ваш реферал пополнил баланс на {amount}$!\n"
-                                f"💰 Вам начислено: +{bonus}$")
+                                f" Ваш реферал пополнил баланс на {amount}$!\n"
+                                f" Вам начислено: +{bonus}$")
                         except:
                             pass
 
@@ -284,11 +284,11 @@ def payment_watcher():
 def main_menu_keyboard(user_id=None):
     keyboard = InlineKeyboardMarkup(row_width=2)
     keyboard.add(
-        InlineKeyboardButton("📦 Каталог",     callback_data="catalog",  icon_custom_emoji_id=EMOJI_CATALOG),
-        InlineKeyboardButton("💸 Реф. баланс", callback_data="referral", icon_custom_emoji_id=EMOJI_REFERRAL),
-        InlineKeyboardButton("🆘 Поддержка",   callback_data="support",  icon_custom_emoji_id=EMOJI_SUPPORT),
-        InlineKeyboardButton("📜 Оферта",      callback_data="terms",    icon_custom_emoji_id=EMOJI_TERMS),
-        InlineKeyboardButton("💰 Баланс",      callback_data="balance",  icon_custom_emoji_id=EMOJI_BALANCE),
+        InlineKeyboardButton(" Каталог",     callback_data="catalog",  icon_custom_emoji_id=EMOJI_CATALOG),
+        InlineKeyboardButton(" Реф. баланс", callback_data="referral", icon_custom_emoji_id=EMOJI_REFERRAL),
+        InlineKeyboardButton(" Поддержка",   callback_data="support",  icon_custom_emoji_id=EMOJI_SUPPORT),
+        InlineKeyboardButton(" Оферта",      callback_data="terms",    icon_custom_emoji_id=EMOJI_TERMS),
+        InlineKeyboardButton(" Баланс",      callback_data="balance",  icon_custom_emoji_id=EMOJI_BALANCE),
     )
     return keyboard
 
@@ -303,7 +303,7 @@ def catalog_keyboard():
             icon_custom_emoji_id=EMOJI_CATALOG
         ))
     keyboard.add(InlineKeyboardButton(
-        "◀️ Назад",
+        " Назад",
         callback_data="back_to_menu",
         icon_custom_emoji_id=EMOJI_BACK
     ))
@@ -358,9 +358,9 @@ def admin_deposits_keyboard():
 def referral_keyboard():
     keyboard = InlineKeyboardMarkup(row_width=2)
     keyboard.add(
-        InlineKeyboardButton("🔗 Моя ссылка",   callback_data="copy_ref_link", icon_custom_emoji_id=EMOJI_REF_LINK),
-        InlineKeyboardButton("📊 Мои рефералы", callback_data="my_referrals",  icon_custom_emoji_id=EMOJI_REF_STATS),
-        InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_menu",  icon_custom_emoji_id=EMOJI_HOME),
+        InlineKeyboardButton(" Моя ссылка",   callback_data="copy_ref_link", icon_custom_emoji_id=EMOJI_REF_LINK),
+        InlineKeyboardButton(" Мои рефералы", callback_data="my_referrals",  icon_custom_emoji_id=EMOJI_REF_STATS),
+        InlineKeyboardButton(" Главное меню", callback_data="back_to_menu",  icon_custom_emoji_id=EMOJI_HOME),
     )
     return keyboard
 
@@ -369,13 +369,13 @@ def my_referrals_keyboard(has_referrals=False):
     keyboard = InlineKeyboardMarkup(row_width=2)
     if not has_referrals:
         keyboard.add(
-            InlineKeyboardButton("🔗 Моя ссылка",   callback_data="copy_ref_link", icon_custom_emoji_id=EMOJI_REF_LINK),
-            InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_menu",  icon_custom_emoji_id=EMOJI_HOME),
+            InlineKeyboardButton(" Моя ссылка",   callback_data="copy_ref_link", icon_custom_emoji_id=EMOJI_REF_LINK),
+            InlineKeyboardButton(" Главное меню", callback_data="back_to_menu",  icon_custom_emoji_id=EMOJI_HOME),
         )
     else:
         keyboard.add(
-            InlineKeyboardButton("🎁 Пригласить ещё", callback_data="referral",     icon_custom_emoji_id=EMOJI_INVITE),
-            InlineKeyboardButton("🏠 Главное меню",   callback_data="back_to_menu", icon_custom_emoji_id=EMOJI_HOME),
+            InlineKeyboardButton(" Пригласить ещё", callback_data="referral",     icon_custom_emoji_id=EMOJI_INVITE),
+            InlineKeyboardButton(" Главное меню",   callback_data="back_to_menu", icon_custom_emoji_id=EMOJI_HOME),
         )
     return keyboard
 
@@ -383,7 +383,7 @@ def my_referrals_keyboard(has_referrals=False):
 def support_keyboard():
     keyboard = InlineKeyboardMarkup()
     keyboard.add(InlineKeyboardButton(
-        "◀️ Назад",
+        " Назад",
         callback_data="back_to_menu",
         icon_custom_emoji_id=EMOJI_BACK
     ))
@@ -393,8 +393,8 @@ def support_keyboard():
 def terms_keyboard():
     keyboard = InlineKeyboardMarkup(row_width=2)
     keyboard.add(
-        InlineKeyboardButton("✅ Согласен", callback_data="back_to_menu", icon_custom_emoji_id=EMOJI_AGREE),
-        InlineKeyboardButton("◀️ Назад",   callback_data="back_to_menu", icon_custom_emoji_id=EMOJI_BACK),
+        InlineKeyboardButton(" Согласен", callback_data="back_to_menu", icon_custom_emoji_id=EMOJI_AGREE),
+        InlineKeyboardButton(" Назад",   callback_data="back_to_menu", icon_custom_emoji_id=EMOJI_BACK),
     )
     return keyboard
 
@@ -413,7 +413,7 @@ def balance_keyboard():
         icon_custom_emoji_id=EMOJI_CUSTOM
     ))
     keyboard.add(InlineKeyboardButton(
-        "◀️ Назад",
+        " Назад",
         callback_data="back_to_menu",
         icon_custom_emoji_id=EMOJI_BACK
     ))
@@ -423,8 +423,8 @@ def balance_keyboard():
 def payment_keyboard(invoice_url):
     keyboard = InlineKeyboardMarkup(row_width=2)
     keyboard.add(
-        InlineKeyboardButton("💳 Оплатить", url=invoice_url,               icon_custom_emoji_id=EMOJI_PAY),
-        InlineKeyboardButton("❌ Отмена",   callback_data="cancel_payment", icon_custom_emoji_id=EMOJI_CANCEL),
+        InlineKeyboardButton(" Оплатить", url=invoice_url,               icon_custom_emoji_id=EMOJI_PAY),
+        InlineKeyboardButton(" Отмена",   callback_data="cancel_payment", icon_custom_emoji_id=EMOJI_CANCEL),
     )
     return keyboard
 
@@ -432,7 +432,7 @@ def payment_keyboard(invoice_url):
 def buy_product_keyboard():
     keyboard = InlineKeyboardMarkup()
     keyboard.add(InlineKeyboardButton(
-        "◀️ В каталог",
+        " В каталог",
         callback_data="catalog",
         icon_custom_emoji_id=EMOJI_BACK
     ))
@@ -443,13 +443,13 @@ def confirm_buy_keyboard(product_key, quantity, insufficient=False):
     keyboard = InlineKeyboardMarkup(row_width=2)
     if insufficient:
         keyboard.add(
-            InlineKeyboardButton("💰 Пополнить баланс", callback_data="balance", icon_custom_emoji_id=EMOJI_BALANCE),
-            InlineKeyboardButton("◀️ Каталог",          callback_data="catalog", icon_custom_emoji_id=EMOJI_BACK),
+            InlineKeyboardButton(" Пополнить баланс", callback_data="balance", icon_custom_emoji_id=EMOJI_BALANCE),
+            InlineKeyboardButton(" Каталог",          callback_data="catalog", icon_custom_emoji_id=EMOJI_BACK),
         )
     else:
         keyboard.add(
-            InlineKeyboardButton("✅ Купить", callback_data=f"confirm_buy_{product_key}_{quantity}", icon_custom_emoji_id=EMOJI_BUY),
-            InlineKeyboardButton("❌ Отмена", callback_data="cancel_buy",                            icon_custom_emoji_id=EMOJI_CANCEL),
+            InlineKeyboardButton(" Купить", callback_data=f"confirm_buy_{product_key}_{quantity}", icon_custom_emoji_id=EMOJI_BUY),
+            InlineKeyboardButton(" Отмена", callback_data="cancel_buy",                            icon_custom_emoji_id=EMOJI_CANCEL),
         )
     return keyboard
 
@@ -457,8 +457,8 @@ def confirm_buy_keyboard(product_key, quantity, insufficient=False):
 def after_buy_keyboard():
     keyboard = InlineKeyboardMarkup(row_width=2)
     keyboard.add(
-        InlineKeyboardButton("🆘 Поддержка",   callback_data="support",     icon_custom_emoji_id=EMOJI_SUPPORT),
-        InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_menu", icon_custom_emoji_id=EMOJI_HOME),
+        InlineKeyboardButton(" Поддержка",   callback_data="support",     icon_custom_emoji_id=EMOJI_SUPPORT),
+        InlineKeyboardButton(" Главное меню", callback_data="back_to_menu", icon_custom_emoji_id=EMOJI_HOME),
     )
     return keyboard
 
@@ -466,8 +466,8 @@ def after_buy_keyboard():
 def cancel_buy_keyboard():
     keyboard = InlineKeyboardMarkup(row_width=2)
     keyboard.add(
-        InlineKeyboardButton("📦 Каталог",      callback_data="catalog",     icon_custom_emoji_id=EMOJI_CATALOG),
-        InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_menu", icon_custom_emoji_id=EMOJI_HOME),
+        InlineKeyboardButton(" Каталог",      callback_data="catalog",     icon_custom_emoji_id=EMOJI_CATALOG),
+        InlineKeyboardButton(" Главное меню", callback_data="back_to_menu", icon_custom_emoji_id=EMOJI_HOME),
     )
     return keyboard
 
@@ -475,21 +475,21 @@ def cancel_buy_keyboard():
 def cancel_payment_keyboard():
     keyboard = InlineKeyboardMarkup(row_width=2)
     keyboard.add(
-        InlineKeyboardButton("💰 Баланс",       callback_data="balance",     icon_custom_emoji_id=EMOJI_BALANCE),
-        InlineKeyboardButton("🏠 Главное меню", callback_data="back_to_menu", icon_custom_emoji_id=EMOJI_HOME),
+        InlineKeyboardButton(" Баланс",       callback_data="balance",     icon_custom_emoji_id=EMOJI_BALANCE),
+        InlineKeyboardButton(" Главное меню", callback_data="back_to_menu", icon_custom_emoji_id=EMOJI_HOME),
     )
     return keyboard
 
 
 def back_to_admin_keyboard():
     keyboard = InlineKeyboardMarkup()
-    keyboard.add(InlineKeyboardButton("◀️ Назад", callback_data="admin_panel"))
+    keyboard.add(InlineKeyboardButton(" Назад", callback_data="admin_panel"))
     return keyboard
 
 
 def back_to_admin_users_keyboard():
     keyboard = InlineKeyboardMarkup()
-    keyboard.add(InlineKeyboardButton("◀️ Назад", callback_data="admin_users"))
+    keyboard.add(InlineKeyboardButton(" Назад", callback_data="admin_users"))
     return keyboard
 
 
@@ -506,8 +506,7 @@ def get_profile_text(user_id, username=None):
     text += f"├ 📦 Куплено: {total_bought} акков\n"
     text += f"├ 💰 Баланс: {balance}$\n"
     text += f"╰─────────────────\n\n"
-    text += f"🎮 MAX | Главное меню\n\n"
-    text += f"1 — Каталог\n2 — Реф. баланс\n3 — Поддержка\n4 — Оферта\n5 — Баланс"
+    text += f"🎮 MAX | Главное меню\n"
     return text
 
 
