@@ -616,7 +616,7 @@ def callback_handler(call):
         bot.answer_callback_query(call.id, f"Ссылка: {ref_link}", show_alert=True)
 
     elif call.data == "support":
-        text = " ПОДДЕРЖКА\n\nСвяжитесь с нами: @support_username"
+        text = " ПОДДЕРЖКА\n\nСвяжитесь с нами: @Qadwero"
         edit_message(chat_id, message_id, text, support_keyboard())
         bot.answer_callback_query(call.id)
 
