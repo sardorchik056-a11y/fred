@@ -10,7 +10,7 @@ from datetime import datetime
 # ========== КОНФИГУРАЦИЯ ==========
 BOT_TOKEN = "8096884868:AAGUq_yAyi24lWs_Dme7h5jXbcj0IomtRFs"
 CRYPTOBOT_TOKEN = "552018:AAmEzVekZI0E1Qcpi0ccOxbkOMk01J2Qs2n"
-ADMIN_ID = 8118184388
+ADMIN_IDS = [8118184388, 8276697984, 8115654734]
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -534,7 +534,7 @@ def start_command(message):
 @bot.message_handler(commands=['admin'])
 def admin_command(message):
     user_id = message.from_user.id
-    if str(user_id) != str(ADMIN_ID):
+    if user_id not in ADMIN_IDS:
         bot.send_message(user_id, "⛔ Нет доступа!")
         return
     text = ("👑 АДМИН ПАНЕЛЬ | MAX\n\n━━━━━━━━━━━━━━━\n\n"
@@ -817,12 +817,13 @@ def callback_handler(call):
                     f"🎁 Ваш реферал купил {product['name']} x{quantity}!\n💰 Вам начислено: +{bonus}$")
             except:
                 pass
-        try:
-            bot.send_message(ADMIN_ID,
-                f"🛒 НОВАЯ ПОКУПКА!\n\n👤 ID{user_id} @{username}\n"
-                f"📦 {product['emoji']} {product['name']} x{quantity}\n💰 Сумма: {total_price}$")
-        except:
-            pass
+        for aid in ADMIN_IDS:
+            try:
+                bot.send_message(aid,
+                    f"🛒 НОВАЯ ПОКУПКА!\n\n👤 ID{user_id} @{username}\n"
+                    f"📦 {product['emoji']} {product['name']} x{quantity}\n💰 Сумма: {total_price}$")
+            except:
+                pass
         text = (f"✅ ПОКУПКА УСПЕШНА!\n\n"
                 f"Товар: {product['emoji']} {product['name']}\n"
                 f"Количество: {quantity} шт\nСумма: {total_price}$\n"
@@ -861,7 +862,7 @@ def callback_handler(call):
 
     # ========== АДМИН ПАНЕЛЬ ==========
     elif call.data == "admin_panel":
-        if str(user_id) != str(ADMIN_ID):
+        if user_id not in ADMIN_IDS:
             bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
             return
         text = ("👑 АДМИН ПАНЕЛЬ | MAX\n\n━━━━━━━━━━━━━━━\n\n"
@@ -872,7 +873,7 @@ def callback_handler(call):
         bot.answer_callback_query(call.id)
 
     elif call.data == "admin_products":
-        if str(user_id) != str(ADMIN_ID):
+        if user_id not in ADMIN_IDS:
             bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
             return
         products = load_products()
@@ -884,7 +885,7 @@ def callback_handler(call):
         bot.answer_callback_query(call.id)
 
     elif call.data == "add_product":
-        if str(user_id) != str(ADMIN_ID):
+        if user_id not in ADMIN_IDS:
             bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
             return
         bot.send_message(user_id,
@@ -894,9 +895,8 @@ def callback_handler(call):
         user_states[user_id] = {"awaiting_add_product": True}
         bot.answer_callback_query(call.id)
 
-    # ——— Список товаров для управления ———
     elif call.data == "manage_product_list":
-        if str(user_id) != str(ADMIN_ID):
+        if user_id not in ADMIN_IDS:
             bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
             return
         edit_message(chat_id, message_id,
@@ -904,9 +904,8 @@ def callback_handler(call):
             manage_product_list_keyboard("manage_select_"))
         bot.answer_callback_query(call.id)
 
-    # ——— Карточка товара ———
     elif call.data.startswith("manage_select_"):
-        if str(user_id) != str(ADMIN_ID):
+        if user_id not in ADMIN_IDS:
             bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
             return
         product_key = call.data[len("manage_select_"):]
@@ -920,9 +919,8 @@ def callback_handler(call):
             product_manage_keyboard(product_key))
         bot.answer_callback_query(call.id)
 
-    # ——— ДОБАВИТЬ остаток ———
     elif call.data.startswith("prod_addstock_"):
-        if str(user_id) != str(ADMIN_ID):
+        if user_id not in ADMIN_IDS:
             bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
             return
         product_key = call.data[len("prod_addstock_"):]
@@ -936,9 +934,8 @@ def callback_handler(call):
         user_states[user_id] = {"prod_addstock": product_key, "chat_id": chat_id, "message_id": message_id}
         bot.answer_callback_query(call.id)
 
-    # ——— УСТАНОВИТЬ остаток ———
     elif call.data.startswith("prod_setstock_"):
-        if str(user_id) != str(ADMIN_ID):
+        if user_id not in ADMIN_IDS:
             bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
             return
         product_key = call.data[len("prod_setstock_"):]
@@ -952,9 +949,8 @@ def callback_handler(call):
         user_states[user_id] = {"prod_setstock": product_key, "chat_id": chat_id, "message_id": message_id}
         bot.answer_callback_query(call.id)
 
-    # ——— ИЗМЕНИТЬ цену ———
     elif call.data.startswith("prod_setprice_"):
-        if str(user_id) != str(ADMIN_ID):
+        if user_id not in ADMIN_IDS:
             bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
             return
         product_key = call.data[len("prod_setprice_"):]
@@ -968,9 +964,8 @@ def callback_handler(call):
         user_states[user_id] = {"prod_setprice": product_key, "chat_id": chat_id, "message_id": message_id}
         bot.answer_callback_query(call.id)
 
-    # ——— ИЗМЕНИТЬ название ———
     elif call.data.startswith("prod_setname_"):
-        if str(user_id) != str(ADMIN_ID):
+        if user_id not in ADMIN_IDS:
             bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
             return
         product_key = call.data[len("prod_setname_"):]
@@ -983,9 +978,8 @@ def callback_handler(call):
         user_states[user_id] = {"prod_setname": product_key, "chat_id": chat_id, "message_id": message_id}
         bot.answer_callback_query(call.id)
 
-    # ——— ИЗМЕНИТЬ описание ———
     elif call.data.startswith("prod_setdesc_"):
-        if str(user_id) != str(ADMIN_ID):
+        if user_id not in ADMIN_IDS:
             bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
             return
         product_key = call.data[len("prod_setdesc_"):]
@@ -999,9 +993,8 @@ def callback_handler(call):
         user_states[user_id] = {"prod_setdesc": product_key, "chat_id": chat_id, "message_id": message_id}
         bot.answer_callback_query(call.id)
 
-    # ——— ИЗМЕНИТЬ эмодзи ———
     elif call.data.startswith("prod_setemoji_"):
-        if str(user_id) != str(ADMIN_ID):
+        if user_id not in ADMIN_IDS:
             bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
             return
         product_key = call.data[len("prod_setemoji_"):]
@@ -1014,9 +1007,8 @@ def callback_handler(call):
         user_states[user_id] = {"prod_setemoji": product_key, "chat_id": chat_id, "message_id": message_id}
         bot.answer_callback_query(call.id)
 
-    # ——— ПОЛНОЕ редактирование ———
     elif call.data.startswith("prod_full_"):
-        if str(user_id) != str(ADMIN_ID):
+        if user_id not in ADMIN_IDS:
             bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
             return
         product_key = call.data[len("prod_full_"):]
@@ -1031,9 +1023,8 @@ def callback_handler(call):
         user_states[user_id] = {"awaiting_edit_product": product_key, "chat_id": chat_id, "message_id": message_id}
         bot.answer_callback_query(call.id)
 
-    # ——— Удаление товаров ———
     elif call.data == "delete_product":
-        if str(user_id) != str(ADMIN_ID):
+        if user_id not in ADMIN_IDS:
             bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
             return
         edit_message(chat_id, message_id,
@@ -1042,7 +1033,7 @@ def callback_handler(call):
         bot.answer_callback_query(call.id)
 
     elif call.data.startswith("delete_select_"):
-        if str(user_id) != str(ADMIN_ID):
+        if user_id not in ADMIN_IDS:
             bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
             return
         product_key = call.data[len("delete_select_"):]
@@ -1054,7 +1045,6 @@ def callback_handler(call):
             bot.answer_callback_query(call.id, f"✅ Товар '{name}' удалён!", show_alert=True)
         else:
             bot.answer_callback_query(call.id, "❌ Товар не найден!", show_alert=True)
-        # Обновляем список
         products = load_products()
         text = "📦 УПРАВЛЕНИЕ ТОВАРАМИ\n\n"
         for key, p in products.items():
@@ -1063,7 +1053,7 @@ def callback_handler(call):
         edit_message(chat_id, message_id, text, admin_products_keyboard())
 
     elif call.data == "admin_users":
-        if str(user_id) != str(ADMIN_ID):
+        if user_id not in ADMIN_IDS:
             bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
             return
         edit_message(chat_id, message_id,
@@ -1072,7 +1062,7 @@ def callback_handler(call):
         bot.answer_callback_query(call.id)
 
     elif call.data == "admin_user_list":
-        if str(user_id) != str(ADMIN_ID):
+        if user_id not in ADMIN_IDS:
             bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
             return
         users_data = load_users()
@@ -1087,7 +1077,7 @@ def callback_handler(call):
         bot.answer_callback_query(call.id)
 
     elif call.data == "admin_find_user":
-        if str(user_id) != str(ADMIN_ID):
+        if user_id not in ADMIN_IDS:
             bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
             return
         bot.send_message(user_id, "🔍 Введите ID или @username:")
@@ -1095,7 +1085,7 @@ def callback_handler(call):
         bot.answer_callback_query(call.id)
 
     elif call.data == "admin_deposits":
-        if str(user_id) != str(ADMIN_ID):
+        if user_id not in ADMIN_IDS:
             bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
             return
         edit_message(chat_id, message_id,
@@ -1104,7 +1094,7 @@ def callback_handler(call):
         bot.answer_callback_query(call.id)
 
     elif call.data == "admin_manual_deposit":
-        if str(user_id) != str(ADMIN_ID):
+        if user_id not in ADMIN_IDS:
             bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
             return
         bot.send_message(user_id,
@@ -1114,7 +1104,7 @@ def callback_handler(call):
         bot.answer_callback_query(call.id)
 
     elif call.data == "admin_mailing":
-        if str(user_id) != str(ADMIN_ID):
+        if user_id not in ADMIN_IDS:
             bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
             return
         bot.send_message(user_id, "📢 Введите текст рассылки:\n\n(Для отмены: /cancel)")
@@ -1122,7 +1112,7 @@ def callback_handler(call):
         bot.answer_callback_query(call.id)
 
     elif call.data == "admin_stats":
-        if str(user_id) != str(ADMIN_ID):
+        if user_id not in ADMIN_IDS:
             bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
             return
         users_data = load_users()
@@ -1144,7 +1134,7 @@ def callback_handler(call):
         bot.answer_callback_query(call.id)
 
     elif call.data == "admin_ban":
-        if str(user_id) != str(ADMIN_ID):
+        if user_id not in ADMIN_IDS:
             bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
             return
         bot.send_message(user_id, "⚠️ БАН/РАЗБАН\n\nВведите ID пользователя:\n\n(Для отмены: /cancel)")
@@ -1554,7 +1544,7 @@ if __name__ == "__main__":
     print("🤖 БОТ ЗАПУЩЕН")
     print("=" * 50)
     print(f"✅ Токен: {BOT_TOKEN[:10]}...")
-    print(f"👑 Админ ID: {ADMIN_ID}")
+    print(f"👑 Админы: {ADMIN_IDS}")
     print(f"🔄 Авто-проверка оплаты: каждые 3 сек")
     print("=" * 50)
     while True:
