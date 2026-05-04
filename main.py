@@ -477,18 +477,18 @@ def send_main_menu(message):
     try:
         if os.path.exists('welcome.jpg'):
             with open('welcome.jpg', 'rb') as photo:
-                bot.send_photo(user_id, photo, caption=text, reply_markup=main_menu_keyboard(user_id))
+                bot.send_photo(user_id, photo, caption=text, parse_mode="HTML", reply_markup=main_menu_keyboard(user_id))
         else:
-            bot.send_message(user_id, text, reply_markup=main_menu_keyboard(user_id))
+            bot.send_message(user_id, text, parse_mode="HTML", reply_markup=main_menu_keyboard(user_id))
     except:
-        bot.send_message(user_id, text, reply_markup=main_menu_keyboard(user_id))
+        bot.send_message(user_id, text, parse_mode="HTML", reply_markup=main_menu_keyboard(user_id))
 
-def edit_message(chat_id, message_id, text, reply_markup=None):
+def edit_message(chat_id, message_id, text, reply_markup=None, parse_mode="HTML"):
     try:
-        bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=reply_markup)
+        bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=reply_markup, parse_mode=parse_mode)
     except:
         try:
-            bot.send_message(chat_id, text, reply_markup=reply_markup)
+            bot.send_message(chat_id, text, reply_markup=reply_markup, parse_mode=parse_mode)
         except:
             pass
 
@@ -560,7 +560,7 @@ def callback_handler(call):
     if call.data == "back_to_menu":
         user_states.pop(user_id, None)
         text = get_profile_text(user_id, username)
-        edit_message(chat_id, message_id, text, main_menu_keyboard(user_id))
+        edit_message(chat_id, message_id, text, main_menu_keyboard(user_id), parse_mode="HTML")
         bot.answer_callback_query(call.id)
 
     elif call.data == "catalog":
@@ -582,11 +582,11 @@ def callback_handler(call):
         text  = '<tg-emoji emoji-id="5258513401784573443">🎟</tg-emoji> РЕФЕРАЛЬНАЯ ПРОГРАММА\n\n'
         text += f"Ваша реферальная ссылка:\n<code>{ref_link}</code>\n\n"
         text += "━━━━━━━━━━━━━━━\n\n"
-        text += f'<tg-emoji emoji-id="5258513401784573443">🎟</tg-emoji> Приглашено: {len(user_data.get('referrals', []))}\n'
-        text += f'<tg-emoji emoji-id="5890848474563352982">🎟</tg-emoji> Заработано: {user_data.get('referral_earnings', 0)}$\n'
-        text += f'<tg-emoji emoji-id="5258204546391351475">🎟</tg-emoji> Баланс: {user_data.get('balance', 0)}$\n\n'
+        text += f'<tg-emoji emoji-id="5258513401784573443">🎟</tg-emoji> Приглашено: {len(user_data.get("referrals", []))}\n'
+        text += f'<tg-emoji emoji-id="5890848474563352982">🎟</tg-emoji> Заработано: {user_data.get("referral_earnings", 0)}$\n'
+        text += f'<tg-emoji emoji-id="5258204546391351475">🎟</tg-emoji> Баланс: {user_data.get("balance", 0)}$\n\n'
         text += "━━━━━━━━━━━━━━━\n\n За каждую покупку реферала вы получаете 10%."
-        edit_message(chat_id, message_id, text, referral_keyboard())
+        edit_message(chat_id, message_id, text, referral_keyboard(), parse_mode="HTML")
         bot.answer_callback_query(call.id)
 
     elif call.data == "my_referrals":
@@ -888,9 +888,9 @@ def callback_handler(call):
             bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
             return
         bot.send_message(user_id,
-            "➕ ДОБАВЛЕНИЕ ТОВАРА\n\nФормат:\n`id|название|цена|количество|эмодзи|описание`\n\n"
-            "Пример:\n`new_token|Новый Токен|5|10|⭐|Описание товара`",
-            parse_mode="Markdown")
+            "➕ ДОБАВЛЕНИЕ ТОВАРА\n\nФормат:\n<code>id|название|цена|количество|эмодзи|описание</code>\n\n"
+            "Пример:\n<code>new_token|Новый Токен|5|10|⭐|Описание товара</code>",
+            parse_mode="HTML")
         user_states[user_id] = {"awaiting_add_product": True}
         bot.answer_callback_query(call.id)
 
@@ -1025,9 +1025,9 @@ def callback_handler(call):
         bot.send_message(user_id,
             f"📋 ПОЛНОЕ РЕДАКТИРОВАНИЕ\n\n"
             f"Товар: {product['emoji']} {product['name']}\n\n"
-            f"Формат: `название|цена|количество|эмодзи|описание`\n\n"
-            f"Пример:\n`Новый Токен|5.00|10|⭐|Новое описание`",
-            parse_mode="Markdown")
+            f"Формат: <code>название|цена|количество|эмодзи|описание</code>\n\n"
+            f"Пример:\n<code>Новый Токен|5.00|10|⭐|Новое описание</code>",
+            parse_mode="HTML")
         user_states[user_id] = {"awaiting_edit_product": product_key, "chat_id": chat_id, "message_id": message_id}
         bot.answer_callback_query(call.id)
 
@@ -1108,8 +1108,8 @@ def callback_handler(call):
             bot.answer_callback_query(call.id, "Нет доступа", show_alert=True)
             return
         bot.send_message(user_id,
-            "💰 РУЧНОЕ ЗАЧИСЛЕНИЕ\n\nФормат:\n`ID|сумма`\n\nПример:\n`123456789|10`",
-            parse_mode="Markdown")
+            "💰 РУЧНОЕ ЗАЧИСЛЕНИЕ\n\nФормат:\n<code>ID|сумма</code>\n\nПример:\n<code>123456789|10</code>",
+            parse_mode="HTML")
         user_states[user_id] = {"awaiting_manual_deposit": True}
         bot.answer_callback_query(call.id)
 
@@ -1228,7 +1228,7 @@ def handle_message(message):
     # ===== Добавить остаток товара =====
     if state.get("prod_addstock"):
         product_key = state["prod_addstock"]
-        s_chat_id = state.get("chat_id", chat_id if 'chat_id' in dir() else user_id)
+        s_chat_id = state.get("chat_id", user_id)
         s_msg_id = state.get("message_id")
         if not text.isdigit() or int(text) <= 0:
             bot.send_message(user_id, "❌ Введите целое положительное число!")
