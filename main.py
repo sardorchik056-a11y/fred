@@ -463,9 +463,9 @@ def get_profile_text(user_id, username=None):
     total_bought = user_data.get("total_bought", 0)
     text  = f"Добро пожаловать, @{username if username else 'Пользователь'}!\n\n"
     text += f"╭─────────────────\n"
-    text += f"├ 👤 ID: {user_id}\n"
-    text += f"├ 📦 Куплено: {total_bought} акков\n"
-    text += f"├  Баланс: {balance}$\n"
+    text += f'├ <tg-emoji emoji-id="6032693626394382504">🎟</tg-emoji> ID: {user_id}\n'
+    text += f'├ <tg-emoji emoji-id="5904462880941545555">🎟</tg-emoji> Куплено: {total_bought} акков\n'
+    text += f'├ <tg-emoji emoji-id="5258204546391351475">🎟</tg-emoji> Баланс: {balance}$\n'
     text += f"╰─────────────────\n\n"
     text += f" MAX | Главное меню\n"
     return text
@@ -579,13 +579,13 @@ def callback_handler(call):
         user_data = users_data.get(str(user_id), {})
         bot_username = bot.get_me().username
         ref_link = f"https://t.me/{bot_username}?start={user_id}"
-        text  = "💸 РЕФЕРАЛЬНЫЙ БАЛАНС\n\n"
-        text += f"Ваша реферальная ссылка:\n{ref_link}\n\n"
+        text  = '<tg-emoji emoji-id="5258513401784573443">🎟</tg-emoji> РЕФЕРАЛЬНАЯ ПРОГРАММА\n\n'
+        text += f"Ваша реферальная ссылка:\n<code>{ref_link}</code>\n\n"
         text += "━━━━━━━━━━━━━━━\n\n"
-        text += f"👥 Приглашено: {len(user_data.get('referrals', []))}\n"
-        text += f"💰 Заработано: {user_data.get('referral_earnings', 0)}$\n"
-        text += f"💎 Баланс: {user_data.get('balance', 0)}$\n\n"
-        text += "━━━━━━━━━━━━━━━\n\n🎁 За каждую покупку реферала вы получаете 10%."
+        text += f'<tg-emoji emoji-id="5258513401784573443">🎟</tg-emoji> Приглашено: {len(user_data.get('referrals', []))}\n'
+        text += f'<tg-emoji emoji-id="5890848474563352982">🎟</tg-emoji> Заработано: {user_data.get('referral_earnings', 0)}$\n'
+        text += f'<tg-emoji emoji-id="5258204546391351475">🎟</tg-emoji> Баланс: {user_data.get('balance', 0)}$\n\n'
+        text += "━━━━━━━━━━━━━━━\n\n За каждую покупку реферала вы получаете 10%."
         edit_message(chat_id, message_id, text, referral_keyboard())
         bot.answer_callback_query(call.id)
 
@@ -595,10 +595,10 @@ def callback_handler(call):
         referrals = user_data.get("referrals", [])
         purchases = load_purchases()
         if not referrals:
-            text = "📊 МОИ РЕФЕРАЛЫ\n\n👥 Пока никого нет\n\nПригласите друзей!"
+            text = " МОИ РЕФЕРАЛЫ\n\n👥 Пока никого нет\n\nПригласите друзей!"
             edit_message(chat_id, message_id, text, my_referrals_keyboard(has_referrals=False))
         else:
-            text = "📊 МОИ РЕФЕРАЛЫ\n\n"
+            text = " МОИ РЕФЕРАЛЫ\n\n"
             for i, ref_id in enumerate(referrals[:10], 1):
                 user_purchases = purchases.get(str(ref_id), [])
                 total_spent = sum(p.get("amount", 0) for p in user_purchases)
@@ -744,7 +744,7 @@ def callback_handler(call):
 
     elif call.data == "balance":
         balance = get_user_balance(user_id)
-        text = f"💰 ВАШ БАЛАНС\n\nТекущий баланс: {balance}$\n\nВыберите сумму для пополнения:"
+        text = f" ВАШ БАЛАНС\n\nТекущий баланс: {balance}$\n\nВыберите сумму для пополнения:"
         edit_message(chat_id, message_id, text, balance_keyboard())
         bot.answer_callback_query(call.id)
 
@@ -838,7 +838,7 @@ def callback_handler(call):
 
     # ========== ПОПОЛНЕНИЕ ==========
     elif call.data == "deposit_custom":
-        text = "💰 ПОПОЛНЕНИЕ БАЛАНСА\n\nВведите сумму (от 1$ до 5000$):"
+        text = " ПОПОЛНЕНИЕ БАЛАНСА\n\nВведите сумму (от 1$ до 5000$):"
         bot.send_message(user_id, text)
         user_states[user_id] = {"awaiting_custom_deposit": True}
         bot.answer_callback_query(call.id)
