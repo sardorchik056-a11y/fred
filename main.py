@@ -1541,11 +1541,6 @@ def handle_message(message):
                 set_banned(target_id, new_status)
                 action = "заблокирован" if new_status else "разблокирован"
                 bot.send_message(user_id, f"✅ Пользователь ID:{target_id} {action}!")
-                try:
-                    bot.send_message(target_id,
-                        "⛔ Вы заблокированы в боте!" if new_status
-                        else "✅ Вы разблокированы в боте!")
-                except: pass
             else:
                 bot.send_message(user_id, "❌ Пользователь не найден!")
         except:
