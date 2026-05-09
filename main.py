@@ -708,7 +708,6 @@ def start_command(message):
 
     user = get_user(user_id)
     if user and user["is_banned"]:
-        bot.send_message(user_id, "⛔ Вы заблокированы в этом боте!")
         return
 
     args = message.text.split()
@@ -748,8 +747,8 @@ def callback_handler(call):
     data       = call.data
 
     user = get_user(user_id)
-    if user and user["is_banned"] and data != "back_to_menu":
-        bot.answer_callback_query(call.id, "⛔ Вы заблокированы!", show_alert=True)
+    if user and user["is_banned"]:
+        bot.answer_callback_query(call.id)
         return
 
     # ── Главное меню ──────────────────────────────────────────────────────────
@@ -1228,6 +1227,10 @@ Web Token и JSON замене не подлежат если были рабо�
 def handle_message(message):
     user_id = message.from_user.id
     text    = message.text.strip() if message.text else ""
+
+    user = get_user(user_id)
+    if user and user["is_banned"]:
+        return
 
     if text == "/cancel":
         user_states.pop(user_id, None)
