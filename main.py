@@ -736,6 +736,58 @@ def admin_command(message):
     bot.send_message(user_id, text, reply_markup=admin_keyboard())
 
 
+@bot.message_handler(commands=["showb"])
+def showb_command(message):
+    user_id = message.from_user.id
+    if not is_admin(user_id):
+        bot.send_message(user_id, "⛔ Нет доступа!")
+        return
+
+    users     = get_all_users()
+    purchases = get_all_purchases()
+
+    # Общий баланс всех пользователей
+    total_balance = round(sum(u["balance"] for u in users), 2)
+
+    # Общая сумма всех пополнений (покупок товаров)
+    total_purchases_amount = round(sum(p["amount"] for p in purchases), 2)
+
+    # Статистика пополнений по пользователям
+    deposit_stats = {}
+    for p in purchases:
+        uid = p["user_id"]
+        deposit_stats[uid] = deposit_stats.get(uid, 0) + p["amount"]
+
+    # Топ-5 пополнивших
+    top_depositors = sorted(deposit_stats.items(), key=lambda x: x[1], reverse=True)[:5]
+
+    # Количество пользователей с балансом > 0
+    users_with_balance = sum(1 for u in users if u["balance"] > 0)
+
+    text = (
+        "💰 ОБЩИЙ БАЛАНС И СТАТИСТИКА ПОПОЛНЕНИЙ\n\n"
+        "━━━━━━━━━━━━━━━\n\n"
+        f"👥 Всего пользователей: {len(users)}\n"
+        f"💵 Пользователей с балансом: {users_with_balance}\n"
+        f"💰 Суммарный баланс всех юзеров: {total_balance}$\n"
+        f"📦 Всего покупок: {len(purchases)}\n"
+        f"📈 Общий оборот (покупки): {total_purchases_amount}$\n\n"
+        "━━━━━━━━━━━━━━━\n\n"
+        "🏆 ТОП-5 ПОКУПАТЕЛЕЙ:\n"
+    )
+
+    for i, (uid, amount) in enumerate(top_depositors, 1):
+        u = get_user(uid)
+        uname = f"@{u['username']}" if u and u["username"] else f"ID{uid}"
+        text += f"{i}. {uname} — {round(amount, 2)}$\n"
+
+    if not top_depositors:
+        text += "Пока нет данных\n"
+
+    text += "\n━━━━━━━━━━━━━━━"
+    bot.send_message(user_id, text)
+
+
 # ========== CALLBACK HANDLER ==========
 
 @bot.callback_query_handler(func=lambda call: True)
