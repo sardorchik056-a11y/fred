@@ -505,6 +505,13 @@ def apply_keyboard():
     return kb
 
 
+def oferta_keyboard():
+    """Клавиатура после отправки заявки — кнопка ознакомления с офертой."""
+    kb = InlineKeyboardMarkup()
+    kb.add(InlineKeyboardButton("✅ Ознакомился", callback_data="oferta_acknowledged"))
+    return kb
+
+
 def main_menu_keyboard(user_id=None):
     kb = InlineKeyboardMarkup(row_width=2)
     kb.add(
@@ -1027,17 +1034,30 @@ def callback_handler(call):
             try:
                 bot.edit_message_text(
                     "✅ Ваша заявка отправлена на проверку администрации.\n\n"
-                    "⏳ Ожидайте — мы уведомим вас о решении.",
-                    chat_id=chat_id, message_id=message_id, reply_markup=None
+                    "📄 Изучите оферту: https://graph.org/PRAVILA-05-12-296",
+                    chat_id=chat_id, message_id=message_id,
+                    reply_markup=oferta_keyboard()
                 )
             except:
                 bot.send_message(user_id,
                     "✅ Ваша заявка отправлена на проверку администрации.\n\n"
-                    "⏳ Ожидайте — мы уведомим вас о решении.")
+                    "📄 Изучите оферту: https://graph.org/PRAVILA-05-12-296",
+                    reply_markup=oferta_keyboard())
             notify_admins_about_application(user_id, username)
         else:
             bot.answer_callback_query(call.id,
                 "⏳ Ваша заявка уже отправлена, ожидайте ответа.", show_alert=True)
+        bot.answer_callback_query(call.id)
+        return
+
+    if data == "oferta_acknowledged":
+        try:
+            bot.edit_message_text(
+                "⏳ Ожидайте — мы уведомим вас о решении.",
+                chat_id=chat_id, message_id=message_id, reply_markup=None
+            )
+        except:
+            bot.send_message(user_id, "⏳ Ожидайте — мы уведомим вас о решении.")
         bot.answer_callback_query(call.id)
         return
 
