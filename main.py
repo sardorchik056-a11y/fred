@@ -349,8 +349,18 @@ def get_items_stats(product_key: str) -> dict:
         "SELECT COUNT(*) as cnt FROM product_items WHERE product_key=?",
         (product_key,), fetchone=True
     )
+    free = db_exec(
+        "SELECT COUNT(*) as cnt FROM product_items WHERE product_key=? AND is_used=0",
+        (product_key,), fetchone=True
+    )
+    used = db_exec(
+        "SELECT COUNT(*) as cnt FROM product_items WHERE product_key=? AND is_used=1",
+        (product_key,), fetchone=True
+    )
     return {
         "total": total["cnt"] if total else 0,
+        "free":  free["cnt"]  if free  else 0,
+        "used":  used["cnt"]  if used  else 0,
     }
 
 
