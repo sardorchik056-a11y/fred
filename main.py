@@ -584,6 +584,7 @@ def product_manage_keyboard(product_key: str):
         InlineKeyboardButton("✏️ Изменить название",    callback_data=f"prod_setname_{product_key}"),
         InlineKeyboardButton("📝 Изменить описание",    callback_data=f"prod_setdesc_{product_key}"),
         InlineKeyboardButton("🎭 Изменить эмодзи",     callback_data=f"prod_setemoji_{product_key}"),
+        InlineKeyboardButton("🔢 Изменить остаток",     callback_data=f"prod_setstock_{product_key}"),
         InlineKeyboardButton("📋 Полное редактирование", callback_data=f"prod_full_{product_key}"),
         InlineKeyboardButton("◀️ Назад",                callback_data="manage_product_list"),
     )
@@ -1551,6 +1552,22 @@ Web Token и JSON замене не подлежат если были рабо�
                                 "chat_id": chat_id, "message_id": message_id}
         bot.answer_callback_query(call.id)
 
+    elif data.startswith("prod_setstock_"):
+        if not is_admin(user_id): return
+        product_key = data[len("prod_setstock_"):]
+        p = get_product(product_key)
+        bot.send_message(user_id,
+            f"🔢 ИЗМЕНИТЬ ОСТАТОК\n\n"
+            f"Товар: {p['emoji']} {p['name']}\n"
+            f"Текущий остаток: {p['stock']} шт\n\n"
+            f"Введите количество:\n"
+            f"<code>100</code> — установить 100 шт\n"
+            f"<code>+50</code> — добавить 50 шт",
+            parse_mode="HTML")
+        user_states[user_id] = {"prod_setstock": product_key,
+                                "chat_id": chat_id, "message_id": message_id}
+        bot.answer_callback_query(call.id)
+
     elif data.startswith("prod_full_"):
         if not is_admin(user_id): return
         product_key = data[len("prod_full_"):]
@@ -1797,6 +1814,38 @@ def handle_message(message):
             )
         except:
             pass
+        return
+
+    # ── Установить остаток ────────────────────────────────────────────────────
+    if state.get("prod_setstock"):
+        product_key = state["prod_setstock"]
+        s_chat_id   = state.get("chat_id", user_id)
+        s_msg_id    = state.get("message_id")
+        try:
+            if text.startswith("+"):
+                delta = int(text[1:])
+                if delta < 0: raise ValueError
+                p = get_product(product_key)
+                new_stock = p["stock"] + delta
+                action = f"+{delta} шт → стало {new_stock} шт"
+            else:
+                new_stock = int(text)
+                if new_stock < 0: raise ValueError
+                action = f"установлено {new_stock} шт"
+        except ValueError:
+            bot.send_message(user_id,
+                "❌ Введите целое число (например: <code>100</code> или <code>+50</code>)",
+                parse_mode="HTML")
+            return
+        update_product_field(product_key, "stock", new_stock)
+        p = get_product(product_key)
+        bot.send_message(user_id, f"✅ Остаток обновлён: {action}")
+        del user_states[user_id]
+        try:
+            bot.edit_message_text(product_info_text(product_key, p),
+                chat_id=s_chat_id, message_id=s_msg_id,
+                reply_markup=product_manage_keyboard(product_key))
+        except: pass
         return
 
     # ── Установить цену ───────────────────────────────────────────────────────
