@@ -521,7 +521,7 @@ def main_menu_keyboard(user_id=None):
                              icon_custom_emoji_id=EMOJI_REFERRAL),
         InlineKeyboardButton(" Поддержка",   callback_data="support",
                              icon_custom_emoji_id=EMOJI_SUPPORT),
-        InlineKeyboardButton(" Оферта",      callback_data="terms",
+        InlineKeyboardButton(" Оферта",      url="https://graph.org/PRAVILA-05-12-296",
                              icon_custom_emoji_id=EMOJI_TERMS),
         InlineKeyboardButton(" Баланс",      callback_data="balance",
                              icon_custom_emoji_id=EMOJI_BALANCE),
@@ -1254,7 +1254,7 @@ Web Token и JSON замене не подлежат если были рабо�
                 f"📦 В наличии: {display_stock} шт\n"
                 f" Ваш баланс: {bal}$\n\n"
                 f"━━━━━━━━━━━━━━━\n\n"
-                f"Введите количество (мин. 10):\n➡️ Например: 10")
+                f"Введите количество (мин. 15):\n➡️ Например: 15")
         edit_message(chat_id, message_id, text, buy_product_keyboard())
         bot.answer_callback_query(call.id)
         user_states[user_id] = {
@@ -1770,8 +1770,8 @@ def handle_message(message):
         quantity = int(text)
         product  = get_product(product_key)
 
-        if quantity < 10:
-            bot.send_message(user_id, "❌ Минимальное количество для покупки: 10 шт!")
+        if quantity < 15:
+            bot.send_message(user_id, "❌ Минимальное количество для покупки: 15 шт!")
             return
 
         if not product or quantity > product["stock"]:
