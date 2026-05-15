@@ -835,8 +835,10 @@ def udv_commands(message):
     
     if command == 'onudv':
         set_udv_mode(user_id, True)
+        bot.send_message(user_id, "✅ Режим UDV включен")
     elif command == 'offudv':
         set_udv_mode(user_id, False)
+        bot.send_message(user_id, "❌ Режим UDV выключен")
 
 
 def send_main_menu(message):
