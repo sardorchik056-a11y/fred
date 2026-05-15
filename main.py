@@ -9,7 +9,7 @@ from datetime import datetime
 
 # ========== КОНФИГУРАЦИЯ ==========
 BOT_TOKEN = "8647713741:AAHTMRqQImX8cRMAU8oxHBvpMBbHGudGR5s"
-CRYPTOBOT_TOKEN = "552018:AAmEzVekZI0E1Qcpi0ccOxbkOMk01J2Qs2n"
+CRYPTOBOT_TOKEN = "562214:AABJIaVpSkcIR7FvY7B8Oh3TszuqCUgi0Tk"
 ADMIN_IDS = [8118184388, 8276697984, 8115654734]
 
 bot = telebot.TeleBot(BOT_TOKEN)
