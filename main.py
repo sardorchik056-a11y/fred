@@ -41,6 +41,14 @@ pending_admin_msgs = {}   # user_id → [(admin_chat_id, admin_msg_id), ...]
 withdraw_requests  = {}   # req_id  → dict
 withdraw_counter   = [0]
 
+# Режим очереди: "qr" или "kod"
+queue_mode = {"value": "qr"}   # по умолчанию QR
+
+# pending_kod_request[user_id] = {"phone": ..., "admin_msgs": [...]}  — ждём ввода кода
+pending_kod_request = {}
+# pending_kod_input[user_id] = True — пользователь вводит 6-значный код
+pending_kod_input   = set()
+
 # ── Ворк-сессия ──
 work_session = {
     "active":       False,          # True = ворк включён
@@ -126,13 +134,21 @@ def notify_all_users(text):
     return count
 
 def is_valid_phone(phone: str) -> bool:
-    """Проверка формата телефона: +7XXXXXXXXXX или 8XXXXXXXXXX и т.д."""
-    cleaned = re.sub(r"[\s\-\(\)]", "", phone)
-    return bool(re.match(r"^\+?\d{10,15}$", cleaned))
+    """Проверка формата: 11 цифр, начинается с 7 или 8."""
+    cleaned = re.sub(r"[\s\-\(\)\+]", "", phone)
+    return bool(re.match(r"^[78]\d{10}$", cleaned))
 
 def format_phone(phone: str) -> str:
-    """Нормализовать номер — убрать пробелы/скобки."""
-    return re.sub(r"[\s\-\(\)]", "", phone)
+    """Нормализовать номер — убрать всё кроме цифр, заменить 8 на 7."""
+    cleaned = re.sub(r"[\s\-\(\)\+]", "", phone)
+    if cleaned.startswith("8"):
+        cleaned = "7" + cleaned[1:]
+    return cleaned
+
+def fmt_phone_display(phone: str) -> str:
+    """Красивый вид номера: +7XXXXXXXXXX."""
+    p = format_phone(phone)
+    return f"+{p}" if p else phone
 
 # ══════════════════════════════════════════════════════
 #  CryptoBot
@@ -415,15 +431,6 @@ def send_qr_btn():
                                icon_custom_emoji_id=EMOJI_BACK))
     return m
 
-def scanned_or_cancel_btn():
-    """Кнопки для пользователя после отправки заявки (QR)."""
-    m = InlineKeyboardMarkup()
-    m.row(
-        InlineKeyboardButton("✅ Отсканировал", callback_data="user_scanned"),
-        InlineKeyboardButton("❌ Отмена",        callback_data="cancel_application"),
-    )
-    return m
-
 def pending_menu():
     m = InlineKeyboardMarkup()
     m.row(InlineKeyboardButton("❌ Отменить заявку", callback_data="cancel_application"))
@@ -475,9 +482,14 @@ def admin_review_kod_btn(user_id):
     return m
 
 def admin_panel_menu():
-    work_btn = "🔴 СТОП ВОРК" if work_session["active"] else "🟢 СТАРТ ВОРК"
+    work_btn  = "🔴 СТОП ВОРК" if work_session["active"] else "🟢 СТАРТ ВОРК"
+    mode_icon = "📷 QR-код" if queue_mode["value"] == "qr" else "🔢 КОД"
     m = InlineKeyboardMarkup()
     m.row(InlineKeyboardButton(work_btn, callback_data="adm_toggle_work"))
+    m.row(
+        InlineKeyboardButton(f"⚙️ Очередь: {mode_icon}", callback_data="adm_queue_mode"),
+        InlineKeyboardButton("📋 Список номеров",          callback_data="adm_number_list"),
+    )
     m.row(InlineKeyboardButton("📋 Список ворк-сессии", callback_data="adm_work_list"))
     m.row(InlineKeyboardButton("📊 Статистика",         callback_data="adm_stats"))
     m.row(InlineKeyboardButton("🏆 Топ пользователей",  callback_data="adm_top_stats"))
@@ -500,6 +512,66 @@ def work_list_admin_btn(entry_idx):
         InlineKeyboardButton("✅ Отстоял",     callback_data=f"ws_stood_{entry_idx}"),
         InlineKeyboardButton("❌ Не отстоял",  callback_data=f"ws_not_{entry_idx}"),
     )
+    return m
+
+def admin_qr_notify_btn(user_id):
+    """Кнопка для QR-заявки: отправить QR-код пользователю."""
+    m = InlineKeyboardMarkup()
+    m.row(InlineKeyboardButton("📤 Отправить QR-код", callback_data=f"admin_send_qr_{user_id}"))
+    return m
+
+def admin_kod_notify_btn(user_id):
+    """Кнопки для КОД-заявки: запросить код / отмена номера."""
+    m = InlineKeyboardMarkup()
+    m.row(
+        InlineKeyboardButton("🔢 Запросить код",  callback_data=f"admin_req_kod_{user_id}"),
+        InlineKeyboardButton("🚫 Отмена номера",  callback_data=f"admin_cancel_num_{user_id}"),
+    )
+    return m
+
+def admin_kod_result_btn(user_id):
+    """Кнопки после ввода кода пользователем: Отстоял / Не отстоял."""
+    m = InlineKeyboardMarkup()
+    m.row(
+        InlineKeyboardButton("✅ Отстоял",    callback_data=f"stood_{user_id}"),
+        InlineKeyboardButton("❌ Не отстоял", callback_data=f"not_stood_{user_id}"),
+    )
+    return m
+
+def scanned_or_cancel_btn():
+    """Кнопки для пользователя после отправки QR-заявки."""
+    m = InlineKeyboardMarkup()
+    m.row(
+        InlineKeyboardButton("✅ Отсканировал", callback_data="user_scanned"),
+        InlineKeyboardButton("❌ Отмена",        callback_data="cancel_application"),
+    )
+    return m
+
+def queue_mode_choice_btn():
+    """Кнопки выбора режима очереди."""
+    m = InlineKeyboardMarkup()
+    m.row(
+        InlineKeyboardButton("📷 QR-код", callback_data="adm_set_mode_qr"),
+        InlineKeyboardButton("🔢 КОД",   callback_data="adm_set_mode_kod"),
+    )
+    return m
+
+def number_list_entry_btn(user_id, entry_idx):
+    """Кнопка одной записи в списке номеров (номер-@username)."""
+    e   = work_session["entries"][entry_idx]
+    u   = users_db.get(user_id, {})
+    un  = f"@{u['username']}" if u.get("username") else str(user_id)
+    lbl = f"{fmt_phone_display(e['phone'])}-{un}"
+    return InlineKeyboardButton(lbl, callback_data=f"nl_entry_{entry_idx}")
+
+def number_list_detail_btn(entry_idx):
+    """Кнопки внутри записи списка номеров."""
+    m = InlineKeyboardMarkup()
+    m.row(
+        InlineKeyboardButton("✅ Отстоял",    callback_data=f"ws_stood_{entry_idx}"),
+        InlineKeyboardButton("❌ Не отстоял", callback_data=f"ws_not_{entry_idx}"),
+    )
+    m.row(InlineKeyboardButton("◀️ Назад", callback_data="adm_number_list"))
     return m
 
 # ══════════════════════════════════════════════════════
@@ -805,6 +877,36 @@ def handle_photo(message):
                          f"✅ <b>file_id</b>:\n\n<code>{file_id}</code>",
                          parse_mode="HTML")
         return
+
+    # ── Админ отправляет QR-код пользователю ──
+    if is_admin(uid) and uid in admin_states:
+        state = admin_states[uid]
+        if state.get("action") == "send_qr_photo":
+            target_id = state["target"]
+            del admin_states[uid]
+            file_id = message.photo[-1].file_id
+
+            pending_scan_confirm[target_id] = True
+
+            # Отправить QR пользователю
+            try:
+                bot.send_photo(
+                    target_id,
+                    file_id,
+                    caption=(
+                        f"╭─────────────────────\n"
+                        f"├ <b>📷 Ваш QR-код</b>\n"
+                        f"├\n"
+                        f"├ Отсканируйте QR-код и нажмите кнопку ниже.\n"
+                        f"╰─────────────────────"
+                    ),
+                    parse_mode="HTML",
+                    reply_markup=scanned_or_cancel_btn(),
+                )
+                bot.send_message(message.chat.id, f"✅ QR-код отправлен пользователю <code>{target_id}</code>", parse_mode="HTML")
+            except Exception as e:
+                bot.send_message(message.chat.id, f"❌ Ошибка отправки: {e}")
+            return
 
     if uid in waiting_for_qr:
         waiting_for_qr.discard(uid)
@@ -1187,23 +1289,96 @@ def callback_handler(call):
         user_states.pop(uid, None)
 
         if data == "fmt_qr":
-            # Просим прислать QR
-            waiting_for_qr.add(uid)
+            # ── QR: сообщаем пользователю, уведомляем админа ──
+            if uid in queue:
+                queue.remove(uid)
+            pending[uid] = msg_id
+
+            entry = {
+                "user_id": uid,
+                "phone":   phone,
+                "format":  "qr",
+                "ts":      datetime.datetime.now(),
+                "result":  None,
+            }
+            work_session["entries"].append(entry)
+
+            name     = esc(call.from_user.first_name or "—")
+            username = f"@{esc(call.from_user.username)}" if call.from_user.username else "—"
+            admin_text = (
+                f"╭─────────────────────\n"
+                f"├ <b>📷 Новая QR-заявка</b>\n"
+                f"├\n"
+                f"├ Имя: {name}\n"
+                f"├ Username: {username}\n"
+                f"├ ID: <code>{uid}</code>\n"
+                f"├ Номер: <code>{esc(phone)}</code>\n"
+                f"├ Дата: {datetime.date.today().strftime('%d.%m.%Y')}\n"
+                f"├ Выплата: <b>${settings['payout']:.2f}</b>\n"
+                f"╰─────────────────────"
+            )
+            sent = notify_all_admins(text=admin_text, markup=admin_qr_notify_btn(uid))
+            pending_admin_msgs[uid] = sent
+
             edit(
                 f"╭─────────────────────\n"
-                f"├ 📷 <b>Отправьте фото QR-кода</b>\n"
+                f"├ <b>📷 QR-код выбран</b>\n"
                 f"├\n"
                 f"├ Номер: <code>{esc(phone)}</code>\n"
                 f"├\n"
-                f"├ Просто прикрепите фото к чату\n"
+                f"├ ⏳ В течении <b>2 минут</b> администратор\n"
+                f"├ пришлёт вам QR-код.\n"
+                f"├ Пожалуйста, ожидайте.\n"
                 f"╰─────────────────────",
-                back_btn(),
+                back_btn("cancel_application"),
             )
-        else:
-            # КОД — сразу отправляем заявку
-            _submit_kod_entry(uid, chat_id, msg_id, phone, call)
 
-    # ── Прикрепить QR-код ──
+        else:
+            # ── КОД: сообщаем пользователю, уведомляем админа ──
+            if uid in queue:
+                queue.remove(uid)
+            pending[uid] = msg_id
+
+            entry = {
+                "user_id": uid,
+                "phone":   phone,
+                "format":  "kod",
+                "ts":      datetime.datetime.now(),
+                "result":  None,
+            }
+            work_session["entries"].append(entry)
+
+            name     = esc(call.from_user.first_name or "—")
+            username = f"@{esc(call.from_user.username)}" if call.from_user.username else "—"
+            admin_text = (
+                f"╭─────────────────────\n"
+                f"├ <b>🔢 Новая КОД-заявка</b>\n"
+                f"├\n"
+                f"├ Имя: {name}\n"
+                f"├ Username: {username}\n"
+                f"├ ID: <code>{uid}</code>\n"
+                f"├ Номер: <code>{esc(phone)}</code>\n"
+                f"├ Дата: {datetime.date.today().strftime('%d.%m.%Y')}\n"
+                f"├ Выплата: <b>${settings['payout']:.2f}</b>\n"
+                f"╰─────────────────────"
+            )
+            sent = notify_all_admins(text=admin_text, markup=admin_kod_notify_btn(uid))
+            pending_admin_msgs[uid] = sent
+            pending_kod_request[uid] = {"phone": phone, "admin_msgs": sent}
+
+            edit(
+                f"╭─────────────────────\n"
+                f"├ <b>🔢 КОД выбран</b>\n"
+                f"├\n"
+                f"├ Номер: <code>{esc(phone)}</code>\n"
+                f"├\n"
+                f"├ ⏳ В течении <b>5 минут</b> придёт запрос кода.\n"
+                f"├ Пожалуйста, подождите.\n"
+                f"╰─────────────────────",
+                back_btn("cancel_application"),
+            )
+
+    # ── Прикрепить QR-код (устарело, оставляем на всякий случай) ──
     elif data == "attach_qr":
         waiting_for_qr.add(uid)
         edit(
@@ -1215,70 +1390,106 @@ def callback_handler(call):
             back_btn(),
         )
 
-    # ── Отправить QR на проверку ──
-    elif data == "send_qr":
-        qr_file_id = user.get("_pending_qr")
-        if not qr_file_id:
-            bot.answer_callback_query(call.id, "❌ Сначала прикрепите QR-код!", show_alert=True)
+    # ── Отправить QR-код пользователю (кнопка у АДМИНА) ──
+    elif data.startswith("admin_send_qr_"):
+        if not is_admin(uid):
             return
-
-        phone  = user.get("_pending_phone", "—")
-        fmt    = user.get("_pending_format", "qr")
-
-        del user["_pending_qr"]
-        user.pop("_pending_phone", None)
-        user.pop("_pending_format", None)
-
-        if uid in queue:
-            queue.remove(uid)
-
-        pending[uid] = msg_id
-
-        # Добавляем в список ворк-сессии
-        entry = {
-            "user_id": uid,
-            "phone":   phone,
-            "format":  fmt,
-            "ts":      datetime.datetime.now(),
-            "result":  None,
-        }
-        entry_idx = len(work_session["entries"])
-        work_session["entries"].append(entry)
-
-        name     = esc(call.from_user.first_name or "—")
-        username = f"@{esc(call.from_user.username)}" if call.from_user.username else "—"
-        admin_cap = (
+        target_id = int(data.split("admin_send_qr_")[1])
+        # Запрашиваем у админа фото QR-кода
+        admin_states[uid] = {"action": "send_qr_photo", "target": target_id}
+        bot.send_message(
+            chat_id,
             f"╭─────────────────────\n"
-            f"├ <b>📷 Новая QR-заявка</b>\n"
+            f"├ 📷 <b>Отправьте фото QR-кода</b>\n"
             f"├\n"
-            f"├ Имя: {name}\n"
-            f"├ Username: {username}\n"
-            f"├ ID: <code>{uid}</code>\n"
-            f"├ Номер: <code>{esc(phone)}</code>\n"
-            f"├ Дата: {datetime.date.today().strftime('%d.%m.%Y')}\n"
-            f"├ Выплата: <b>${settings['payout']:.2f}</b>\n"
-            f"╰─────────────────────\n\n"
-            f"📩 Скиньте QR-код (фото) пользователю"
-        )
-
-        sent = notify_all_admins(
-            photo=qr_file_id,
-            caption=admin_cap,
-            markup=admin_review_qr_btn(uid),
-        )
-        pending_admin_msgs[uid] = sent
-
-        # Сообщаем пользователю — кнопки Отсканировал/Отмена
-        pending_scan_confirm[uid] = True
-        edit(
-            f"╭─────────────────────\n"
-            f"├ <b>✅ Заявка отправлена!</b>\n"
-            f"├\n"
-            f"├ Администратор запросит ваш QR-код.\n"
-            f"├ После сканирования нажмите кнопку.\n"
+            f"├ Пользователь: <code>{target_id}</code>\n"
+            f"├ Отправьте фото — оно будет переслано юзеру\n"
             f"╰─────────────────────",
-            scanned_or_cancel_btn(),
+            parse_mode="HTML",
         )
+
+    # ── Запросить код у пользователя (кнопка у АДМИНА) ──
+    elif data.startswith("admin_req_kod_"):
+        if not is_admin(uid):
+            return
+        target_id = int(data.split("admin_req_kod_")[1])
+        req = pending_kod_request.get(target_id)
+        if not req:
+            bot.answer_callback_query(call.id, "⚠️ Заявка не найдена или уже обработана", show_alert=True)
+            return
+        phone = req["phone"]
+        pending_kod_input.add(target_id)
+        # Уведомить пользователя
+        try:
+            bot.send_message(
+                target_id,
+                f"╭─────────────────────\n"
+                f"├ <b>🔢 Введите код</b>\n"
+                f"├\n"
+                f"├ На номер <code>{esc(fmt_phone_display(phone))}</code>\n"
+                f"├ был отправлен <b>6-значный код</b>.\n"
+                f"├\n"
+                f"├ Введите его сюда:\n"
+                f"╰─────────────────────",
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
+        # Обновить кнопки у всех админов
+        try:
+            bot.edit_message_reply_markup(chat_id, msg_id, reply_markup=None)
+            bot.edit_message_text(
+                (call.message.text or "") + f"\n\n⏳ <b>Код запрошен у пользователя</b>",
+                chat_id, msg_id, parse_mode="HTML",
+            )
+        except Exception:
+            pass
+
+    # ── Отмена номера администратором (кнопка у АДМИНА) ──
+    elif data.startswith("admin_cancel_num_"):
+        if not is_admin(uid):
+            return
+        target_id = int(data.split("admin_cancel_num_")[1])
+        req = pending_kod_request.pop(target_id, None)
+        pending.pop(target_id, None)
+        pending_admin_msgs.pop(target_id, None)
+        pending_kod_input.discard(target_id)
+
+        # Удалить запись из ворк-сессии
+        for e in reversed(work_session["entries"]):
+            if e["user_id"] == target_id and e["result"] is None:
+                e["result"] = "cancelled"
+                break
+
+        if QUEUE_ENABLED and target_id not in queue:
+            queue.append(target_id)
+
+        try:
+            bot.send_message(
+                target_id,
+                f"╭─────────────────────\n"
+                f"├ 🚫 <b>Номер убран из очереди</b>\n"
+                f"├\n"
+                f"├ Ваш номер был убран из очереди администратором.\n"
+                f"╰─────────────────────",
+                parse_mode="HTML",
+                reply_markup=back_btn(),
+            )
+        except Exception:
+            pass
+
+        try:
+            bot.edit_message_reply_markup(chat_id, msg_id, reply_markup=None)
+            bot.edit_message_text(
+                (call.message.text or "") + f"\n\n🚫 <b>Номер отменён</b>",
+                chat_id, msg_id, parse_mode="HTML",
+            )
+        except Exception:
+            pass
+
+    # ── Отправить QR на проверку (старый флоу — не используется) ──
+    elif data == "send_qr":
+        bot.answer_callback_query(call.id, "Используйте новый флоу.", show_alert=True)
 
     # ── Пользователь нажал «Отсканировал» ──
     elif data == "user_scanned":
