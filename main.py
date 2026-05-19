@@ -3,6 +3,7 @@ import requests
 import threading
 import time
 import datetime
+import re
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto
 
 BOT_TOKEN       = "8628524678:AAH6AuW7KdTF-_-OiVfVH5i_LJH5NLSDg1I"
@@ -10,9 +11,9 @@ CRYPTOBOT_TOKEN = "583673:AAwGj7YtqTJZuSomTia1W08YRNo1udgrQiL"
 CRYPTOBOT_API   = "https://pay.crypt.bot/api"
 
 # ══════════════════════════════════════════════════════
-#  👑  СПИСОК АДМИНИСТРАТОРОВ  (добавляйте ID сюда)
+#  👑  СПИСОК АДМИНИСТРАТОРОВ
 # ══════════════════════════════════════════════════════
-ADMIN_IDS = [8118184388, 8521752725]          # пример: [111111111, 222222222]
+ADMIN_IDS = [8118184388, 8521752725]
 
 PAYOUT_AMOUNT = 5.0
 QUEUE_ENABLED = True
@@ -35,10 +36,19 @@ BANNER_FILE_ID = "AgACAgIAAxkBAAMSagsnVdxEcPVJgVA5Q83bPAi3iycAAiEeaxsEqVlIe-1MMX
 # ══════════════════════════════════════════════════════
 users_db           = {}   # user_id → dict
 queue              = []   # очередь: список user_id
-pending            = {}   # user_id → user_msg_id  (QR на проверке)
+pending            = {}   # user_id → user_msg_id  (заявка на проверке)
 pending_admin_msgs = {}   # user_id → [(admin_chat_id, admin_msg_id), ...]
 withdraw_requests  = {}   # req_id  → dict
 withdraw_counter   = [0]
+
+# ── Ворк-сессия ──
+work_session = {
+    "active":       False,          # True = ворк включён
+    "start_time":   None,           # datetime когда включили
+    "entries":      [],             # список dict {user_id, phone, format, ts, result}
+    # result: None | "stood" | "not_stood"
+}
+
 settings = {
     "payout": PAYOUT_AMOUNT,
     "rules": (
@@ -52,10 +62,13 @@ settings = {
     ),
 }
 
-user_states       = {}
+user_states       = {}    # user_id → state string or dict
 waiting_for_photo = set()
 waiting_for_qr    = set()
 admin_states      = {}
+
+# pending_scan_confirm[user_id] = True когда ждём "отсканировал" или "отмена"
+pending_scan_confirm = {}
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -87,7 +100,6 @@ def em(eid, fallback="⭐"):
     return f'<tg-emoji emoji-id="{eid}">{fallback}</tg-emoji>'
 
 def notify_all_admins(text="", markup=None, photo=None, caption=None):
-    """Отправить сообщение всем администраторам. Возвращает [(chat_id, msg_id), ...]."""
     sent = []
     for admin_id in ADMIN_IDS:
         try:
@@ -101,6 +113,26 @@ def notify_all_admins(text="", markup=None, photo=None, caption=None):
         except Exception as e:
             print(f"[notify_admin {admin_id}] {e}")
     return sent
+
+def notify_all_users(text):
+    """Разослать уведомление всем пользователям."""
+    count = 0
+    for u_id in list(users_db.keys()):
+        try:
+            bot.send_message(u_id, text, parse_mode="HTML")
+            count += 1
+        except Exception:
+            pass
+    return count
+
+def is_valid_phone(phone: str) -> bool:
+    """Проверка формата телефона: +7XXXXXXXXXX или 8XXXXXXXXXX и т.д."""
+    cleaned = re.sub(r"[\s\-\(\)]", "", phone)
+    return bool(re.match(r"^\+?\d{10,15}$", cleaned))
+
+def format_phone(phone: str) -> str:
+    """Нормализовать номер — убрать пробелы/скобки."""
+    return re.sub(r"[\s\-\(\)]", "", phone)
 
 # ══════════════════════════════════════════════════════
 #  CryptoBot
@@ -126,13 +158,13 @@ def cryptobot_create_check(amount: float, currency: str = "USDT") -> dict | None
 # ══════════════════════════════════════════════════════
 def _queue_updater():
     while True:
-        time.sleep(300)          # 5 минут
-        snapshot = list(queue)   # копия, чтобы не блокировать
+        time.sleep(300)
+        snapshot = list(queue)
         total    = len(snapshot)
         for i, user_id in enumerate(snapshot):
             pos = i + 1
             if pos == 1:
-                continue         # первый — пусть сам заходит в «Сдать номер»
+                continue
             try:
                 bot.send_message(
                     user_id,
@@ -157,8 +189,7 @@ def queue_text(pos):
         f"╭─────────────────────\n"
         f'├ <b>{em(EMOJI_QUEUE,"⏳")} Вы в очереди</b>\n'
         f"├\n"
-        f'├ <tg-emoji emoji-id="6030537810509828330">🎟</tg-emoji> '
-        f"Ваша позиция: <b>{pos}</b> из <b>{total}</b>\n"
+        f"├ Ваша позиция: <b>{pos}</b> из <b>{total}</b>\n"
         f"├\n"
         f"├ Позиция обновляется каждые 5 минут\n"
         f"╰─────────────────────"
@@ -167,6 +198,7 @@ def queue_text(pos):
 def welcome_text(tg_user, user):
     name     = esc(tg_user.first_name or "—")
     username = f"@{esc(tg_user.username)}" if tg_user.username else "—"
+    work_status = "🟢 Ворк активен" if work_session["active"] else "🔴 Ворк не активен"
     return (
         f"╭─────────────────────\n"
         f'├ <b><tg-emoji emoji-id="5260399854500191689">🎟</tg-emoji> {name}</b>\n'
@@ -176,6 +208,8 @@ def welcome_text(tg_user, user):
         f'├ <tg-emoji emoji-id="5258204546391351475">🎟</tg-emoji> Баланс: <b>${user["balance"]:.2f}</b>\n'
         f'├ <tg-emoji emoji-id="5449407131675558756">🎟</tg-emoji> Сдано: <b>{user["numbers_rented"]}</b> номеров\n'
         f'├ <tg-emoji emoji-id="5258185631355378853">🎟</tg-emoji> Статус: {get_status(user)}\n'
+        f"├\n"
+        f"├ {work_status}\n"
         f"╰─────────────────────"
     )
 
@@ -194,10 +228,9 @@ def balance_text(user):
         f"╭─────────────────────\n"
         f"├ <b>{em(EMOJI_BALANCE,'💰')} Ваш баланс</b>\n"
         f"├\n"
-        f'├ <tg-emoji emoji-id="5904462880941545555">🎟</tg-emoji> '
-        f'Доступно: <b>${user["balance"]:.2f}</b>\n'
+        f'├ Доступно: <b>${user["balance"]:.2f}</b>\n'
         f"├\n"
-        f'├ <tg-emoji emoji-id="6030776052345737530">🎟</tg-emoji> <b>Последние операции:</b>\n'
+        f"├ <b>Последние операции:</b>\n"
         f"{lines}"
         f"╰─────────────────────"
     )
@@ -207,11 +240,10 @@ def withdraw_text(user):
         f"╭─────────────────────\n"
         f"├ <b>{em(EMOJI_BALANCE,'💸')} Вывод средств</b>\n"
         f"├\n"
-        f'├ <tg-emoji emoji-id="5904462880941545555">🎟</tg-emoji> '
-        f'Доступно: <b>${user["balance"]:.2f}</b>\n'
+        f'├ Доступно: <b>${user["balance"]:.2f}</b>\n'
         f"├\n"
-        f'├ <tg-emoji emoji-id="5258108352008823107">🎟</tg-emoji> Минимальная сумма: <b>$1.00</b>\n'
-        f'├ <tg-emoji emoji-id="6030776052345737530">🎟</tg-emoji> Выплата через: <b>@CryptoBot</b>\n'
+        f"├ Минимальная сумма: <b>$1.00</b>\n"
+        f"├ Выплата через: <b>@CryptoBot</b>\n"
         f"├\n"
         f"├ Введите сумму для вывода\n"
         f"╰─────────────────────"
@@ -222,10 +254,9 @@ def withdraw_confirm_text(amount: float, user):
         f"╭─────────────────────\n"
         f"├ <b>{em(EMOJI_BALANCE,'💸')} Подтверждение вывода</b>\n"
         f"├\n"
-        f'├ <tg-emoji emoji-id="5890848474563352982">🎟</tg-emoji> Сумма: <b>${amount:.2f}</b>\n'
-        f'├ <tg-emoji emoji-id="5258204546391351475">🎟</tg-emoji> '
-        f'Останется: <b>${user["balance"] - amount:.2f}</b>\n'
-        f'├ <tg-emoji emoji-id="5258108352008823107">🎟</tg-emoji> Способ: <b>@CryptoBot (USDT)</b>\n'
+        f'├ Сумма: <b>${amount:.2f}</b>\n'
+        f'├ Останется: <b>${user["balance"] - amount:.2f}</b>\n'
+        f"├ Способ: <b>@CryptoBot (USDT)</b>\n"
         f"├\n"
         f"├ Подтвердите заявку на вывод\n"
         f"╰─────────────────────"
@@ -234,13 +265,12 @@ def withdraw_confirm_text(amount: float, user):
 def withdraw_pending_admin_text(req_id, user_id, amount, first_name, username):
     return (
         f"╭─────────────────────\n"
-        f'├ <b><tg-emoji emoji-id="5904462880941545555">🎟</tg-emoji> '
-        f"Заявка на вывод #{req_id}</b>\n"
+        f"├ <b>💸 Заявка на вывод #{req_id}</b>\n"
         f"├\n"
-        f'├ <tg-emoji emoji-id="5260399854500191689">🎟</tg-emoji> Имя: {first_name}\n'
-        f'├ <tg-emoji emoji-id="5323442290708985472">🎟</tg-emoji> Username: {username}\n'
-        f'├ <tg-emoji emoji-id="5282843764451195532">🎟</tg-emoji> ID: <code>{user_id}</code>\n'
-        f'├ <tg-emoji emoji-id="5890848474563352982">🎟</tg-emoji> Сумма: <b>${amount:.2f} USDT</b>\n'
+        f"├ Имя: {first_name}\n"
+        f"├ Username: {username}\n"
+        f"├ ID: <code>{user_id}</code>\n"
+        f"├ Сумма: <b>${amount:.2f} USDT</b>\n"
         f"╰─────────────────────"
     )
 
@@ -250,11 +280,10 @@ def submit_price_text():
         f"╭─────────────────────\n"
         f"├ <b>{em(EMOJI_SUBMIT,'📦')} Сдать номер</b>\n"
         f"├\n"
-        f'├ <tg-emoji emoji-id="5890848474563352982">🎟</tg-emoji> '
-        f"Выплата за номер: <b>${amt:.2f}</b>\n"
+        f"├ Выплата за номер: <b>${amt:.2f}</b>\n"
         f"├\n"
-        f'├ <tg-emoji emoji-id="5258108352008823107">🎟</tg-emoji> Прикрепите QR-код номера\n'
-        f"├    и нажмите кнопку ниже\n"
+        f"├ Введите номер телефона\n"
+        f"├ Пример: <code>+79001234567</code>\n"
         f"╰─────────────────────"
     )
 
@@ -279,27 +308,18 @@ def statistics_text():
         f"╭─────────────────────\n"
         f"├ <b>{em(EMOJI_STATS,'📊')} Статистика</b>\n"
         f"├\n"
-        f'├ <tg-emoji emoji-id="5258513401784573443">🎟</tg-emoji> '
-        f"Пользователей: <b>{len(users_db)}</b>\n"
-        f'├ <tg-emoji emoji-id="5449407131675558756">🎟</tg-emoji> '
-        f"Сдано номеров: <b>{sum(u['numbers_rented'] for u in users_db.values())}</b>\n"
-        f'├ <tg-emoji emoji-id="5890848474563352982">🎟</tg-emoji> '
-        f"Выплачено: <b>${sum(u['balance'] for u in users_db.values()):.2f}</b>\n"
-        f'├ <tg-emoji emoji-id="6030537810509828330">🎟</tg-emoji> '
-        f"В очереди: <b>{len(queue)}</b>\n"
-        f'├ <tg-emoji emoji-id="6039496266180726678">🎟</tg-emoji> '
-        f"На проверке: <b>{len(pending)}</b>\n"
+        f"├ Пользователей: <b>{len(users_db)}</b>\n"
+        f"├ Сдано номеров: <b>{sum(u['numbers_rented'] for u in users_db.values())}</b>\n"
+        f"├ Выплачено: <b>${sum(u['balance'] for u in users_db.values()):.2f}</b>\n"
+        f"├ В очереди: <b>{len(queue)}</b>\n"
+        f"├ На проверке: <b>{len(pending)}</b>\n"
         f"╰─────────────────────"
     )
 
 def admin_top_stats_text():
-    """ТОП-20 пользователей по сдаче и по балансу."""
     medal = {1: "🥇", 2: "🥈", 3: "🥉"}
-
-    by_rented  = sorted(users_db.items(),
-                        key=lambda x: x[1]["numbers_rented"], reverse=True)[:20]
-    by_balance = sorted(users_db.items(),
-                        key=lambda x: x[1]["balance"],        reverse=True)[:20]
+    by_rented  = sorted(users_db.items(), key=lambda x: x[1]["numbers_rented"], reverse=True)[:20]
+    by_balance = sorted(users_db.items(), key=lambda x: x[1]["balance"],        reverse=True)[:20]
 
     def row(i, uid, u, val):
         m    = medal.get(i, f"{i}.")
@@ -314,14 +334,38 @@ def admin_top_stats_text():
             text += row(i, uid, u, f"{u['numbers_rented']} шт.")
     else:
         text += "├ Нет данных\n"
-
     text += "├\n├ 💰 <b>ТОП-20 по балансу:</b>\n├\n"
     if by_balance:
         for i, (uid, u) in enumerate(by_balance, 1):
             text += row(i, uid, u, f"${u['balance']:.2f}")
     else:
         text += "├ Нет данных\n"
+    text += "╰─────────────────────"
+    return text
 
+def work_session_list_text():
+    """Список номеров текущей (или последней) ворк-сессии."""
+    entries = work_session["entries"]
+    if not entries:
+        return "╭─────────────────────\n├ 📋 <b>Список номеров пуст</b>\n╰─────────────────────"
+
+    start_str = work_session["start_time"].strftime("%d.%m %H:%M") if work_session["start_time"] else "—"
+    text = (
+        f"╭─────────────────────\n"
+        f"├ 📋 <b>Ворк-сессия с {start_str}</b>\n"
+        f"├ Всего номеров: <b>{len(entries)}</b>\n"
+        f"├\n"
+    )
+    for idx, e in enumerate(entries, 1):
+        u = users_db.get(e["user_id"], {})
+        name = esc(u.get("first_name") or str(e["user_id"]))
+        fmt  = "QR" if e["format"] == "qr" else "КОД"
+        result_icon = ""
+        if e["result"] == "stood":
+            result_icon = " ✅"
+        elif e["result"] == "not_stood":
+            result_icon = " ❌"
+        text += f"├ <b>{idx}.</b> {esc(e['phone'])} [{fmt}] — {name}{result_icon}\n"
     text += "╰─────────────────────"
     return text
 
@@ -352,9 +396,13 @@ def back_btn(target="back_menu"):
                                icon_custom_emoji_id=EMOJI_BACK))
     return m
 
-def submit_menu():
+def format_choice_menu():
+    """Выбор формата: QR-код или КОД."""
     m = InlineKeyboardMarkup()
-    m.row(InlineKeyboardButton("Прикрепить QR-код", callback_data="attach_qr"))
+    m.row(
+        InlineKeyboardButton("📷 QR-код",  callback_data="fmt_qr"),
+        InlineKeyboardButton("🔢 КОД",    callback_data="fmt_kod"),
+    )
     m.row(InlineKeyboardButton("Назад", callback_data="back_menu",
                                icon_custom_emoji_id=EMOJI_BACK))
     return m
@@ -367,8 +415,16 @@ def send_qr_btn():
                                icon_custom_emoji_id=EMOJI_BACK))
     return m
 
+def scanned_or_cancel_btn():
+    """Кнопки для пользователя после отправки заявки (QR)."""
+    m = InlineKeyboardMarkup()
+    m.row(
+        InlineKeyboardButton("✅ Отсканировал", callback_data="user_scanned"),
+        InlineKeyboardButton("❌ Отмена",        callback_data="cancel_application"),
+    )
+    return m
+
 def pending_menu():
-    """Меню когда заявка уже на проверке — можно отменить."""
     m = InlineKeyboardMarkup()
     m.row(InlineKeyboardButton("❌ Отменить заявку", callback_data="cancel_application"))
     m.row(InlineKeyboardButton("Назад", callback_data="back_menu",
@@ -400,16 +456,29 @@ def admin_withdraw_btn(req_id: int):
     )
     return m
 
-def admin_review_btn(user_id):
+def admin_review_qr_btn(user_id):
+    """Кнопки для QR-заявки: встал/не встал."""
     m = InlineKeyboardMarkup()
     m.row(
-        InlineKeyboardButton("✅ Принять",   callback_data=f"approve_{user_id}"),
-        InlineKeyboardButton("❌ Отклонить", callback_data=f"reject_{user_id}"),
+        InlineKeyboardButton("✅ Встал",    callback_data=f"stood_{user_id}"),
+        InlineKeyboardButton("❌ Не встал", callback_data=f"not_stood_{user_id}"),
+    )
+    return m
+
+def admin_review_kod_btn(user_id):
+    """Кнопки для КОД-заявки: встал/не встал."""
+    m = InlineKeyboardMarkup()
+    m.row(
+        InlineKeyboardButton("✅ Встал",    callback_data=f"stood_{user_id}"),
+        InlineKeyboardButton("❌ Не встал", callback_data=f"not_stood_{user_id}"),
     )
     return m
 
 def admin_panel_menu():
+    work_btn = "🔴 СТОП ВОРК" if work_session["active"] else "🟢 СТАРТ ВОРК"
     m = InlineKeyboardMarkup()
+    m.row(InlineKeyboardButton(work_btn, callback_data="adm_toggle_work"))
+    m.row(InlineKeyboardButton("📋 Список ворк-сессии", callback_data="adm_work_list"))
     m.row(InlineKeyboardButton("📊 Статистика",         callback_data="adm_stats"))
     m.row(InlineKeyboardButton("🏆 Топ пользователей",  callback_data="adm_top_stats"))
     m.row(
@@ -424,16 +493,22 @@ def admin_panel_menu():
     m.row(InlineKeyboardButton("💵 Изменить выплату",  callback_data="adm_payout"))
     return m
 
+def work_list_admin_btn(entry_idx):
+    """Кнопки «Отстоял / Не отстоял» для конкретной записи в ворк-списке."""
+    m = InlineKeyboardMarkup()
+    m.row(
+        InlineKeyboardButton("✅ Отстоял",     callback_data=f"ws_stood_{entry_idx}"),
+        InlineKeyboardButton("❌ Не отстоял",  callback_data=f"ws_not_{entry_idx}"),
+    )
+    return m
+
 # ══════════════════════════════════════════════════════
-#  Вспомогательная функция: завершение обработки QR
-#  После approve/reject пользователь добавляется в
-#  конец очереди — он может подать новый QR только
-#  дождавшись своей очереди.
+#  Вспомогательная функция: завершение обработки
 # ══════════════════════════════════════════════════════
 def _finish_qr_review(target_id):
-    """Убрать из pending и поставить в конец очереди."""
     pending.pop(target_id, None)
     pending_admin_msgs.pop(target_id, None)
+    pending_scan_confirm.pop(target_id, None)
     if QUEUE_ENABLED and target_id not in queue:
         queue.append(target_id)
 
@@ -453,8 +528,7 @@ def _process_withdraw_take(req_id: int, chat_id: int, msg_id: int | None = None)
     user_id = req["user_id"]
     check   = cryptobot_create_check(amount)
     if check is None:
-        bot.send_message(chat_id,
-                         f"❌ Ошибка создания чека CryptoBot для заявки #{req_id}.")
+        bot.send_message(chat_id, f"❌ Ошибка создания чека CryptoBot для заявки #{req_id}.")
         return
 
     req["status"]    = "done"
@@ -472,14 +546,12 @@ def _process_withdraw_take(req_id: int, chat_id: int, msg_id: int | None = None)
         bot.send_message(
             user_id,
             f"╭─────────────────────\n"
-            f'├ <b><tg-emoji emoji-id="6041720006973067267">🎟</tg-emoji> Вывод одобрен!</b>\n'
+            f"├ ✅ <b>Вывод одобрен!</b>\n"
             f"├\n"
-            f'├ <tg-emoji emoji-id="5904462880941545555">🎟</tg-emoji> '
-            f"Сумма: <b>${amount:.2f} USDT</b>\n"
-            f'├ <tg-emoji emoji-id="6030776052345737530">🎟</tg-emoji> Чек: <b>@CryptoBot</b>\n'
+            f"├ Сумма: <b>${amount:.2f} USDT</b>\n"
+            f"├ Чек: <b>@CryptoBot</b>\n"
             f"├\n"
-            f"├ Нажмите кнопку ниже, чтобы получить\n"
-            f"├ ваши средства через @CryptoBot\n"
+            f"├ Нажмите кнопку ниже для получения\n"
             f"╰─────────────────────",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup().row(
@@ -493,8 +565,8 @@ def _process_withdraw_take(req_id: int, chat_id: int, msg_id: int | None = None)
         f"╭─────────────────────\n"
         f"├ ✅ <b>Заявка #{req_id} выплачена!</b>\n"
         f"├\n"
-        f'├ 💸 Чек на <b>${amount:.2f} USDT</b>\n'
-        f'├ 🔗 {check_link}\n'
+        f"├ 💸 Чек на <b>${amount:.2f} USDT</b>\n"
+        f"├ 🔗 {check_link}\n"
         f"╰─────────────────────"
     )
     if msg_id:
@@ -530,12 +602,10 @@ def _process_withdraw_reject(req_id: int, chat_id: int, msg_id: int | None = Non
         bot.send_message(
             user_id,
             f"╭─────────────────────\n"
-            f'├ <b><tg-emoji emoji-id="6030776052345737530">🎟</tg-emoji> Вывод отклонён</b>\n'
+            f"├ ❌ <b>Вывод отклонён</b>\n"
             f"├\n"
-            f'├ <tg-emoji emoji-id="6039539366177541657">🎟</tg-emoji> '
-            f"Возвращено: <b>${amount:.2f}</b>\n"
-            f'├ <tg-emoji emoji-id="5258204546391351475">🎟</tg-emoji> '
-            f'Ваш баланс: <b>${u["balance"]:.2f}</b>\n'
+            f"├ Возвращено: <b>${amount:.2f}</b>\n"
+            f'├ Ваш баланс: <b>${u["balance"]:.2f}</b>\n'
             f"├\n"
             f"├ Обратитесь в поддержку за деталями\n"
             f"╰─────────────────────",
@@ -544,11 +614,7 @@ def _process_withdraw_reject(req_id: int, chat_id: int, msg_id: int | None = Non
     except Exception:
         pass
 
-    rej_text = (
-        f"╭─────────────────────\n"
-        f"├ ❌ <b>Заявка #{req_id} отклонена.</b>\n"
-        f"╰─────────────────────"
-    )
+    rej_text = f"╭─────────────────────\n├ ❌ <b>Заявка #{req_id} отклонена.</b>\n╰─────────────────────"
     if msg_id:
         try:
             bot.edit_message_text(rej_text, chat_id, msg_id, parse_mode="HTML")
@@ -563,8 +629,50 @@ def _process_withdraw_reject(req_id: int, chat_id: int, msg_id: int | None = Non
 @bot.message_handler(commands=["getfileid"])
 def cmd_getfileid(message):
     waiting_for_photo.add(message.from_user.id)
-    bot.send_message(message.chat.id,
-                     "Отправь фото — верну <b>file_id</b>", parse_mode="HTML")
+    bot.send_message(message.chat.id, "Отправь фото — верну <b>file_id</b>", parse_mode="HTML")
+
+
+@bot.message_handler(commands=["on"])
+def cmd_on(message):
+    """Включить ворк (команда для админа)."""
+    if not is_admin(message.from_user.id):
+        return
+    if work_session["active"]:
+        bot.send_message(message.chat.id, "✅ Ворк уже активен.")
+        return
+    work_session["active"]     = True
+    work_session["start_time"] = datetime.datetime.now()
+    work_session["entries"]    = []
+    bot.send_message(message.chat.id, "🟢 <b>Ворк включён!</b> Пользователи уведомлены.", parse_mode="HTML")
+    count = notify_all_users(
+        "╭─────────────────────\n"
+        "├ 🟢 <b>Ворк начался!</b>\n"
+        "├\n"
+        "├ Теперь вы можете сдать номер.\n"
+        "╰─────────────────────"
+    )
+    print(f"[/on] уведомлено {count} пользователей")
+
+
+@bot.message_handler(commands=["off"])
+def cmd_off(message):
+    """Выключить ворк (команда для админа)."""
+    if not is_admin(message.from_user.id):
+        return
+    if not work_session["active"]:
+        bot.send_message(message.chat.id, "🔴 Ворк уже выключен.")
+        return
+    work_session["active"] = False
+    bot.send_message(message.chat.id, "🔴 <b>Ворк выключен!</b> Пользователи уведомлены.", parse_mode="HTML")
+    count = notify_all_users(
+        "╭─────────────────────\n"
+        "├ 🔴 <b>Ворк завершён!</b>\n"
+        "├\n"
+        "├ Приём номеров остановлен.\n"
+        "├ Ожидайте следующего ворка.\n"
+        "╰─────────────────────"
+    )
+    print(f"[/off] уведомлено {count} пользователей")
 
 
 @bot.message_handler(commands=["take"])
@@ -591,9 +699,7 @@ def cmd_take(message):
     try:
         req_id = int(parts[1])
     except ValueError:
-        bot.send_message(message.chat.id,
-                         "❌ Укажите числовой номер: <code>/take 4</code>",
-                         parse_mode="HTML")
+        bot.send_message(message.chat.id, "❌ Укажите числовой номер: <code>/take 4</code>", parse_mode="HTML")
         return
     _process_withdraw_take(req_id, message.chat.id)
 
@@ -604,9 +710,7 @@ def cmd_reject(message):
         return
     parts = message.text.strip().split()
     if len(parts) < 2:
-        bot.send_message(message.chat.id,
-                         "❌ Укажите номер: <code>/reject 4</code>",
-                         parse_mode="HTML")
+        bot.send_message(message.chat.id, "❌ Укажите номер: <code>/reject 4</code>", parse_mode="HTML")
         return
     try:
         req_id = int(parts[1])
@@ -620,8 +724,7 @@ def cmd_reject(message):
 def cmd_takeall(message):
     if not is_admin(message.from_user.id):
         return
-    ids = [r for r in withdraw_requests
-           if withdraw_requests[r]["status"] == "pending"]
+    ids = [r for r in withdraw_requests if withdraw_requests[r]["status"] == "pending"]
     if not ids:
         bot.send_message(message.chat.id, "📭 Нет ожидающих заявок.")
         return
@@ -642,32 +745,30 @@ def cmd_takeall(message):
 def cmd_rejectall(message):
     if not is_admin(message.from_user.id):
         return
-    ids = [r for r in withdraw_requests
-           if withdraw_requests[r]["status"] == "pending"]
+    ids = [r for r in withdraw_requests if withdraw_requests[r]["status"] == "pending"]
     if not ids:
         bot.send_message(message.chat.id, "📭 Нет ожидающих заявок.")
         return
     for req_id in ids:
         _process_withdraw_reject(req_id, message.chat.id)
-    bot.send_message(message.chat.id,
-                     f"❌ Отклонено: <b>{len(ids)}</b>", parse_mode="HTML")
+    bot.send_message(message.chat.id, f"❌ Отклонено: <b>{len(ids)}</b>", parse_mode="HTML")
 
 
 @bot.message_handler(commands=["admin"])
 def cmd_admin(message):
     if not is_admin(message.from_user.id):
         return
+    work_status = "🟢 Ворк активен" if work_session["active"] else "🔴 Ворк не активен"
     bot.send_message(
         message.chat.id,
         f"╭─────────────────────\n"
         f"├ <b>{em(EMOJI_ADMIN,'👑')} Панель администратора</b>\n"
         f"├\n"
-        f'├ <tg-emoji emoji-id="5904462880941545555">🎟</tg-emoji> '
-        f'Выплата за номер: <b>${settings["payout"]:.2f}</b>\n'
-        f'├ <tg-emoji emoji-id="5258513401784573443">🎟</tg-emoji> '
-        f'Пользователей: <b>{len(users_db)}</b>\n'
-        f'├ <tg-emoji emoji-id="5258185631355378853">🎟</tg-emoji> '
-        f'Администраторов: <b>{len(ADMIN_IDS)}</b>\n'
+        f"├ Выплата за номер: <b>${settings['payout']:.2f}</b>\n"
+        f"├ Пользователей: <b>{len(users_db)}</b>\n"
+        f"├ Администраторов: <b>{len(ADMIN_IDS)}</b>\n"
+        f"├ {work_status}\n"
+        f"├ Номеров в сессии: <b>{len(work_session['entries'])}</b>\n"
         f"╰─────────────────────",
         parse_mode="HTML",
         reply_markup=admin_panel_menu(),
@@ -688,8 +789,7 @@ def start(message):
         bot.send_photo(message.chat.id, BANNER_FILE_ID,
                        caption=text, parse_mode="HTML", reply_markup=main_menu())
     else:
-        bot.send_message(message.chat.id, text,
-                         parse_mode="HTML", reply_markup=main_menu())
+        bot.send_message(message.chat.id, text, parse_mode="HTML", reply_markup=main_menu())
 
 # ══════════════════════════════════════════════════════
 #  Обработчики медиа
@@ -715,8 +815,7 @@ def handle_photo(message):
             file_id,
             caption=(
                 f"╭─────────────────────\n"
-                f'├ <b><tg-emoji emoji-id="6039496266180726678">🎟</tg-emoji> '
-                f"QR-код получен!</b>\n"
+                f"├ <b>📷 QR-код получен!</b>\n"
                 f"├\n"
                 f"├ Проверьте фото и нажмите\n"
                 f"├ <b>«Отправить заявку»</b>\n"
@@ -731,12 +830,43 @@ def handle_photo(message):
 # ══════════════════════════════════════════════════════
 @bot.message_handler(content_types=["text"])
 def handle_text(message):
-    uid = message.from_user.id
+    uid  = message.from_user.id
+    text = message.text.strip()
+
+    # ── Ввод номера телефона ──
+    if user_states.get(uid) == "waiting_phone":
+        phone = format_phone(text)
+        if not is_valid_phone(phone):
+            bot.send_message(
+                message.chat.id,
+                "╭─────────────────────\n"
+                "├ ❌ <b>Неверный формат номера</b>\n"
+                "├\n"
+                "├ Введите номер в формате:\n"
+                "├ <code>+79001234567</code>\n"
+                "╰─────────────────────",
+                parse_mode="HTML",
+            )
+            return
+        # Сохраняем номер и спрашиваем формат
+        get_user(uid)["_pending_phone"] = phone
+        user_states[uid] = "waiting_format"
+        bot.send_message(
+            message.chat.id,
+            f"╭─────────────────────\n"
+            f"├ 📱 Номер: <code>{esc(phone)}</code>\n"
+            f"├\n"
+            f"├ Выберите формат сдачи:\n"
+            f"╰─────────────────────",
+            parse_mode="HTML",
+            reply_markup=format_choice_menu(),
+        )
+        return
 
     # ── Ввод суммы вывода ──
     if user_states.get(uid) == "waiting_withdraw_amount":
         del user_states[uid]
-        raw = message.text.strip().replace(",", ".")
+        raw = text.replace(",", ".")
         try:
             amount = float(raw)
         except ValueError:
@@ -744,7 +874,6 @@ def handle_text(message):
                 message.chat.id,
                 "╭─────────────────────\n"
                 "├ ❌ <b>Некорректная сумма</b>\n"
-                "├\n"
                 "├ Введите число, например: <code>5.00</code>\n"
                 "╰─────────────────────",
                 parse_mode="HTML",
@@ -767,7 +896,6 @@ def handle_text(message):
                 message.chat.id,
                 f"╭─────────────────────\n"
                 f"├ ❌ <b>Недостаточно средств</b>\n"
-                f"├\n"
                 f'├ Доступно: <b>${u["balance"]:.2f}</b>\n'
                 f"╰─────────────────────",
                 parse_mode="HTML",
@@ -787,7 +915,6 @@ def handle_text(message):
 
     state  = admin_states[uid]
     action = state.get("action")
-    text   = message.text.strip()
 
     # ── Рассылка ──
     if action == "broadcast":
@@ -866,11 +993,7 @@ def handle_text(message):
                 parse_mode="HTML",
             )
             try:
-                bot.send_message(
-                    target_id,
-                    f"💰 На ваш баланс начислено <b>${amount:.2f}</b>!",
-                    parse_mode="HTML",
-                )
+                bot.send_message(target_id, f"💰 На ваш баланс начислено <b>${amount:.2f}</b>!", parse_mode="HTML")
             except Exception:
                 pass
         except ValueError:
@@ -907,7 +1030,7 @@ def handle_text(message):
 
     elif action == "set_payout":
         try:
-            amount           = float(text)
+            amount             = float(text)
             settings["payout"] = amount
             del admin_states[uid]
             bot.send_message(
@@ -924,7 +1047,6 @@ def handle_text(message):
         reason    = text
         del admin_states[uid]
 
-        # Пометить сообщения у всех администраторов
         for (achat, amsg) in pending_admin_msgs.get(target_id, []):
             try:
                 bot.edit_message_caption(
@@ -950,8 +1072,7 @@ def handle_text(message):
             )
         except Exception:
             pass
-        bot.send_message(message.chat.id,
-                         "✅ Заявка отклонена, пользователь уведомлён.")
+        bot.send_message(message.chat.id, "✅ Заявка отклонена, пользователь уведомлён.")
 
 # ══════════════════════════════════════════════════════
 #  Обработчик callback-кнопок
@@ -977,8 +1098,7 @@ def callback_handler(call):
         except Exception as e:
             print(f"[edit] {e}")
             try:
-                bot.send_message(chat_id, text,
-                                 parse_mode="HTML", reply_markup=markup)
+                bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=markup)
             except Exception as e2:
                 print(f"[edit fallback] {e2}")
 
@@ -1013,24 +1133,36 @@ def callback_handler(call):
     # ── Сдать номер ──
     elif data == "submit_number":
         if user.get("banned"):
-            bot.answer_callback_query(call.id, "🚫 Вы заблокированы!",
-                                      show_alert=True)
+            bot.answer_callback_query(call.id, "🚫 Вы заблокированы!", show_alert=True)
             return
 
-        # Заявка уже на проверке → показать кнопку отмены
+        # Проверяем ворк
+        if not work_session["active"]:
+            edit(
+                "╭─────────────────────\n"
+                "├ 🔴 <b>Ворк не активен</b>\n"
+                "├\n"
+                "├ Сдача номеров сейчас не принимается.\n"
+                "├ Ожидайте уведомления о начале ворка.\n"
+                "╰─────────────────────",
+                back_btn(),
+            )
+            return
+
+        # Заявка уже на проверке
         if uid in pending:
             edit(
-                f"╭─────────────────────\n"
-                f"├ ⏳ <b>Заявка на проверке</b>\n"
-                f"├\n"
-                f"├ Ваш QR-код отправлен администратору.\n"
-                f"├ Дождитесь решения или отмените заявку.\n"
-                f"╰─────────────────────",
+                "╭─────────────────────\n"
+                "├ ⏳ <b>Заявка на проверке</b>\n"
+                "├\n"
+                "├ Ваша заявка уже отправлена администратору.\n"
+                "├ Дождитесь решения или отмените заявку.\n"
+                "╰─────────────────────",
                 pending_menu(),
             )
             return
 
-        # Очередь: пользователь не первый
+        # Очередь
         if QUEUE_ENABLED:
             if uid not in queue:
                 queue.append(uid)
@@ -1038,18 +1170,139 @@ def callback_handler(call):
             if pos > 1:
                 edit(queue_text(pos), back_btn())
                 return
-            # Позиция 1 → переходим к отправке
 
-        edit(submit_price_text(), submit_menu())
+        # Запрашиваем номер телефона
+        user_states[uid] = "waiting_phone"
+        edit(submit_price_text(), back_btn())
+
+    # ── Выбор формата ──
+    elif data in ("fmt_qr", "fmt_kod"):
+        if user_states.get(uid) != "waiting_format":
+            return
+        phone = user.get("_pending_phone", "")
+        if not phone:
+            edit("❌ Ошибка: номер не найден. Попробуйте снова.", back_btn())
+            return
+        user["_pending_format"] = "qr" if data == "fmt_qr" else "kod"
+        user_states.pop(uid, None)
+
+        if data == "fmt_qr":
+            # Просим прислать QR
+            waiting_for_qr.add(uid)
+            edit(
+                f"╭─────────────────────\n"
+                f"├ 📷 <b>Отправьте фото QR-кода</b>\n"
+                f"├\n"
+                f"├ Номер: <code>{esc(phone)}</code>\n"
+                f"├\n"
+                f"├ Просто прикрепите фото к чату\n"
+                f"╰─────────────────────",
+                back_btn(),
+            )
+        else:
+            # КОД — сразу отправляем заявку
+            _submit_kod_entry(uid, chat_id, msg_id, phone, call)
+
+    # ── Прикрепить QR-код ──
+    elif data == "attach_qr":
+        waiting_for_qr.add(uid)
+        edit(
+            "╭─────────────────────\n"
+            "├ <b>📷 Отправьте фото QR-кода</b>\n"
+            "├\n"
+            "├ Просто прикрепите изображение к чату\n"
+            "╰─────────────────────",
+            back_btn(),
+        )
+
+    # ── Отправить QR на проверку ──
+    elif data == "send_qr":
+        qr_file_id = user.get("_pending_qr")
+        if not qr_file_id:
+            bot.answer_callback_query(call.id, "❌ Сначала прикрепите QR-код!", show_alert=True)
+            return
+
+        phone  = user.get("_pending_phone", "—")
+        fmt    = user.get("_pending_format", "qr")
+
+        del user["_pending_qr"]
+        user.pop("_pending_phone", None)
+        user.pop("_pending_format", None)
+
+        if uid in queue:
+            queue.remove(uid)
+
+        pending[uid] = msg_id
+
+        # Добавляем в список ворк-сессии
+        entry = {
+            "user_id": uid,
+            "phone":   phone,
+            "format":  fmt,
+            "ts":      datetime.datetime.now(),
+            "result":  None,
+        }
+        entry_idx = len(work_session["entries"])
+        work_session["entries"].append(entry)
+
+        name     = esc(call.from_user.first_name or "—")
+        username = f"@{esc(call.from_user.username)}" if call.from_user.username else "—"
+        admin_cap = (
+            f"╭─────────────────────\n"
+            f"├ <b>📷 Новая QR-заявка</b>\n"
+            f"├\n"
+            f"├ Имя: {name}\n"
+            f"├ Username: {username}\n"
+            f"├ ID: <code>{uid}</code>\n"
+            f"├ Номер: <code>{esc(phone)}</code>\n"
+            f"├ Дата: {datetime.date.today().strftime('%d.%m.%Y')}\n"
+            f"├ Выплата: <b>${settings['payout']:.2f}</b>\n"
+            f"╰─────────────────────\n\n"
+            f"📩 Скиньте QR-код (фото) пользователю"
+        )
+
+        sent = notify_all_admins(
+            photo=qr_file_id,
+            caption=admin_cap,
+            markup=admin_review_qr_btn(uid),
+        )
+        pending_admin_msgs[uid] = sent
+
+        # Сообщаем пользователю — кнопки Отсканировал/Отмена
+        pending_scan_confirm[uid] = True
+        edit(
+            f"╭─────────────────────\n"
+            f"├ <b>✅ Заявка отправлена!</b>\n"
+            f"├\n"
+            f"├ Администратор запросит ваш QR-код.\n"
+            f"├ После сканирования нажмите кнопку.\n"
+            f"╰─────────────────────",
+            scanned_or_cancel_btn(),
+        )
+
+    # ── Пользователь нажал «Отсканировал» ──
+    elif data == "user_scanned":
+        if uid not in pending_scan_confirm:
+            bot.answer_callback_query(call.id, "❌ Нет активной заявки!", show_alert=True)
+            return
+        pending_scan_confirm.pop(uid, None)
+        edit(
+            "╭─────────────────────\n"
+            "├ ✅ <b>Спасибо!</b>\n"
+            "├\n"
+            "├ Ожидайте результата от администратора.\n"
+            "╰─────────────────────",
+            back_btn(),
+        )
+        # Уведомить админов
+        notify_all_admins(f"ℹ️ Пользователь <code>{uid}</code> ({esc(users_db.get(uid, {}).get('first_name',''))}) нажал <b>«Отсканировал»</b>", markup=None)
 
     # ── Отмена заявки пользователем ──
     elif data == "cancel_application":
         if uid not in pending:
-            bot.answer_callback_query(call.id, "❌ Нет активной заявки!",
-                                      show_alert=True)
+            bot.answer_callback_query(call.id, "❌ Нет активной заявки!", show_alert=True)
             return
 
-        # Пометить сообщения у всех администраторов
         for (achat, amsg) in pending_admin_msgs.get(uid, []):
             try:
                 bot.edit_message_caption(
@@ -1060,114 +1313,277 @@ def callback_handler(call):
             except Exception:
                 pass
 
+        # Удалить из ворк-сессии (последнюю запись этого пользователя)
+        for e in reversed(work_session["entries"]):
+            if e["user_id"] == uid and e["result"] is None:
+                e["result"] = "cancelled"
+                break
+
         _finish_qr_review(uid)
 
         edit(
-            f"╭─────────────────────\n"
-            f"├ ✅ <b>Заявка отменена</b>\n"
-            f"├\n"
-            f"├ Вы добавлены в конец очереди.\n"
-            f"├ Когда подойдёт очередь — сможете\n"
-            f"├ отправить новый QR-код.\n"
-            f"╰─────────────────────",
+            "╭─────────────────────\n"
+            "├ ✅ <b>Заявка отменена</b>\n"
+            "├\n"
+            "├ Вы добавлены в конец очереди.\n"
+            "╰─────────────────────",
             back_btn(),
         )
 
-    # ── Прикрепить QR-код ──
-    elif data == "attach_qr":
-        waiting_for_qr.add(uid)
-        edit(
-            f"╭─────────────────────\n"
-            f'├ <b><tg-emoji emoji-id="5258108352008823107">🎟</tg-emoji> '
-            f"Отправьте фото QR-кода</b>\n"
-            f"├\n"
-            f"├ Просто прикрепите изображение\n"
-            f"├ к этому чату\n"
-            f"╰─────────────────────",
-            back_btn(),
-        )
+    # ── Встал (QR или КОД) — начислить выплату ──
+    elif data.startswith("stood_"):
+        if not is_admin(uid):
+            return
+        target_id = int(data.split("_")[1])
+        u = get_user(target_id)
+        payout = settings["payout"]
+        u["balance"]        += payout
+        u["numbers_rented"] += 1
+        u["history"].append({
+            "date":   datetime.date.today().strftime("%d.%m"),
+            "amount": payout,
+            "status": "Встал",
+        })
 
-    # ── Отправить QR на проверку ──
-    elif data == "send_qr":
-        qr_file_id = user.get("_pending_qr")
-        if not qr_file_id:
-            bot.answer_callback_query(call.id, "❌ Сначала прикрепите QR-код!",
-                                      show_alert=True)
+        # Обновить ворк-запись
+        phone_str = ""
+        for e in reversed(work_session["entries"]):
+            if e["user_id"] == target_id and e["result"] is None:
+                e["result"]  = "stood"
+                phone_str    = e["phone"]
+                break
+
+        _finish_qr_review(target_id)
+
+        # Уведомление пользователю
+        try:
+            bot.send_message(
+                target_id,
+                f"╭─────────────────────\n"
+                f"├ ✅ <b>Встал!</b>\n"
+                f"├\n"
+                f"├ Ваш номер: <code>{esc(phone_str)}</code>\n"
+                f"├ Начислено: <b>${payout:.2f}</b>\n"
+                f'├ Баланс: <b>${u["balance"]:.2f}</b>\n'
+                f"╰─────────────────────",
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
+
+        # Обновить сообщение у админа
+        try:
+            if call.message.photo:
+                bot.edit_message_caption(
+                    caption=(call.message.caption or "") + f"\n\n✅ <b>ВСТАЛ</b> — начислено ${payout:.2f}",
+                    chat_id=chat_id, message_id=msg_id, parse_mode="HTML",
+                )
+            else:
+                bot.edit_message_text(
+                    (call.message.text or "") + f"\n\n✅ <b>ВСТАЛ</b> — начислено ${payout:.2f}",
+                    chat_id, msg_id, parse_mode="HTML",
+                )
+        except Exception:
+            pass
+
+    # ── Не встал — без выплаты ──
+    elif data.startswith("not_stood_"):
+        if not is_admin(uid):
+            return
+        target_id = int(data.split("_")[2])
+
+        phone_str = ""
+        for e in reversed(work_session["entries"]):
+            if e["user_id"] == target_id and e["result"] is None:
+                e["result"] = "not_stood"
+                phone_str   = e["phone"]
+                break
+
+        _finish_qr_review(target_id)
+
+        try:
+            bot.send_message(
+                target_id,
+                f"╭─────────────────────\n"
+                f"├ ❌ <b>Не встал</b>\n"
+                f"├\n"
+                f"├ Ваш номер: <code>{esc(phone_str)}</code>\n"
+                f"├ К сожалению, выплата не начислена.\n"
+                f"╰─────────────────────",
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
+
+        try:
+            if call.message.photo:
+                bot.edit_message_caption(
+                    caption=(call.message.caption or "") + "\n\n❌ <b>НЕ ВСТАЛ</b>",
+                    chat_id=chat_id, message_id=msg_id, parse_mode="HTML",
+                )
+            else:
+                bot.edit_message_text(
+                    (call.message.text or "") + "\n\n❌ <b>НЕ ВСТАЛ</b>",
+                    chat_id, msg_id, parse_mode="HTML",
+                )
+        except Exception:
+            pass
+
+    # ── Ворк-список: отстоял ──
+    elif data.startswith("ws_stood_"):
+        if not is_admin(uid):
+            return
+        try:
+            entry_idx = int(data.split("ws_stood_")[1])
+            e = work_session["entries"][entry_idx]
+        except (IndexError, ValueError):
+            bot.send_message(chat_id, "❌ Запись не найдена.")
             return
 
-        del user["_pending_qr"]
+        if e["result"] is not None and e["result"] not in (None,):
+            bot.answer_callback_query(call.id, "⚠️ Уже обработано", show_alert=True)
+            return
 
-        # Убираем пользователя из очереди — он «использовал» свой ход
-        if uid in queue:
-            queue.remove(uid)
+        payout    = settings["payout"]
+        target_id = e["user_id"]
+        e["result"] = "stood"
 
-        pending[uid] = msg_id
+        u = get_user(target_id)
+        u["balance"]        += payout
+        u["numbers_rented"] += 1
+        u["history"].append({
+            "date":   datetime.date.today().strftime("%d.%m"),
+            "amount": payout,
+            "status": "Отстоял",
+        })
 
-        name     = esc(call.from_user.first_name or "—")
-        username = f"@{esc(call.from_user.username)}" if call.from_user.username else "—"
-        admin_cap = (
-            f"╭─────────────────────\n"
-            f'├ <b><tg-emoji emoji-id="5258108352008823107">🎟</tg-emoji> '
-            f"Новая заявка на сдачу номера</b>\n"
-            f"├\n"
-            f'├ <tg-emoji emoji-id="5260399854500191689">🎟</tg-emoji> Имя: {name}\n'
-            f'├ <tg-emoji emoji-id="5323442290708985472">🎟</tg-emoji> Username: {username}\n'
-            f'├ <tg-emoji emoji-id="5282843764451195532">🎟</tg-emoji> ID: <code>{uid}</code>\n'
-            f'├ <tg-emoji emoji-id="5440621591387980068">🎟</tg-emoji> '
-            f'Дата: {datetime.date.today().strftime("%d.%m.%Y")}\n'
-            f'├ <tg-emoji emoji-id="5890848474563352982">🎟</tg-emoji> '
-            f'Выплата: <b>${settings["payout"]:.2f}</b>\n'
-            f"╰─────────────────────"
-        )
+        try:
+            bot.send_message(
+                target_id,
+                f"╭─────────────────────\n"
+                f"├ ✅ <b>Отстоял!</b>\n"
+                f"├\n"
+                f"├ Ваш номер: <code>{esc(e['phone'])}</code> отстоял\n"
+                f"├ Начислено: <b>${payout:.2f}</b>\n"
+                f'├ Баланс: <b>${u["balance"]:.2f}</b>\n'
+                f"╰─────────────────────",
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
 
-        # Рассылаем всем администраторам и запоминаем msg_id
-        sent = notify_all_admins(
-            photo=qr_file_id,
-            caption=admin_cap,
-            markup=admin_review_btn(uid),
-        )
-        pending_admin_msgs[uid] = sent
+        try:
+            bot.edit_message_text(
+                work_session_list_text(),
+                chat_id, msg_id,
+                parse_mode="HTML",
+                reply_markup=_build_work_list_markup(),
+            )
+        except Exception:
+            pass
+        bot.answer_callback_query(call.id, f"✅ Начислено ${payout:.2f}")
 
-        edit(
-            f"╭─────────────────────\n"
-            f'├ <b><tg-emoji emoji-id="5258043150110301407">🎟</tg-emoji> '
-            f"Заявка отправлена!</b>\n"
-            f"├\n"
-            f'├ <tg-emoji emoji-id="5440621591387980068">🎟</tg-emoji> '
-            f"Ожидайте решения администратора\n"
-            f"├ Мы уведомим вас о результате\n"
-            f"╰─────────────────────",
-            back_btn(),
+    # ── Ворк-список: не отстоял ──
+    elif data.startswith("ws_not_"):
+        if not is_admin(uid):
+            return
+        try:
+            entry_idx = int(data.split("ws_not_")[1])
+            e = work_session["entries"][entry_idx]
+        except (IndexError, ValueError):
+            bot.send_message(chat_id, "❌ Запись не найдена.")
+            return
+
+        if e["result"] is not None:
+            bot.answer_callback_query(call.id, "⚠️ Уже обработано", show_alert=True)
+            return
+
+        target_id   = e["user_id"]
+        e["result"] = "not_stood"
+
+        try:
+            bot.send_message(
+                target_id,
+                f"╭─────────────────────\n"
+                f"├ ❌ <b>Не отстоял</b>\n"
+                f"├\n"
+                f"├ Ваш номер: <code>{esc(e['phone'])}</code> не отстоял\n"
+                f"├ Выплата не начислена.\n"
+                f"╰─────────────────────",
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
+
+        try:
+            bot.edit_message_text(
+                work_session_list_text(),
+                chat_id, msg_id,
+                parse_mode="HTML",
+                reply_markup=_build_work_list_markup(),
+            )
+        except Exception:
+            pass
+        bot.answer_callback_query(call.id, "❌ Не отстоял")
+
+    # ── Переключение ворка из панели ──
+    elif data == "adm_toggle_work":
+        if not is_admin(uid):
+            return
+        if work_session["active"]:
+            work_session["active"] = False
+            notify_all_users(
+                "╭─────────────────────\n"
+                "├ 🔴 <b>Ворк завершён!</b>\n"
+                "├\n"
+                "├ Приём номеров остановлен.\n"
+                "╰─────────────────────"
+            )
+            bot.send_message(chat_id, "🔴 <b>Ворк выключен</b>", parse_mode="HTML", reply_markup=admin_panel_menu())
+        else:
+            work_session["active"]     = True
+            work_session["start_time"] = datetime.datetime.now()
+            work_session["entries"]    = []
+            notify_all_users(
+                "╭─────────────────────\n"
+                "├ 🟢 <b>Ворк начался!</b>\n"
+                "├\n"
+                "├ Теперь вы можете сдать номер.\n"
+                "╰─────────────────────"
+            )
+            bot.send_message(chat_id, "🟢 <b>Ворк включён</b>", parse_mode="HTML", reply_markup=admin_panel_menu())
+
+    # ── Список ворк-сессии ──
+    elif data == "adm_work_list":
+        if not is_admin(uid):
+            return
+        bot.send_message(
+            chat_id,
+            work_session_list_text(),
+            parse_mode="HTML",
+            reply_markup=_build_work_list_markup(),
         )
 
     # ── Вывод ──
     elif data == "withdraw":
         if user.get("banned"):
-            bot.answer_callback_query(call.id, "🚫 Вы заблокированы!",
-                                      show_alert=True)
+            bot.answer_callback_query(call.id, "🚫 Вы заблокированы!", show_alert=True)
             return
         if user["balance"] < 1.0:
-            bot.answer_callback_query(call.id,
-                                      "❌ Недостаточно средств! Минимум $1.00",
-                                      show_alert=True)
+            bot.answer_callback_query(call.id, "❌ Недостаточно средств! Минимум $1.00", show_alert=True)
             return
         user_states[uid] = "waiting_withdraw_amount"
         try:
             if call.message.photo:
-                bot.edit_message_caption(
-                    caption=withdraw_text(user),
-                    chat_id=chat_id, message_id=msg_id,
-                    parse_mode="HTML", reply_markup=back_btn("balance"),
-                )
+                bot.edit_message_caption(caption=withdraw_text(user), chat_id=chat_id,
+                                         message_id=msg_id, parse_mode="HTML",
+                                         reply_markup=back_btn("balance"))
             else:
-                bot.edit_message_text(
-                    withdraw_text(user), chat_id, msg_id,
-                    parse_mode="HTML", reply_markup=back_btn("balance"),
-                )
+                bot.edit_message_text(withdraw_text(user), chat_id, msg_id,
+                                      parse_mode="HTML", reply_markup=back_btn("balance"))
         except Exception as e:
             print(f"[withdraw edit] {e}")
-            bot.send_message(chat_id, withdraw_text(user),
-                             parse_mode="HTML", reply_markup=back_btn("balance"))
+            bot.send_message(chat_id, withdraw_text(user), parse_mode="HTML", reply_markup=back_btn("balance"))
 
     elif data.startswith("withdraw_confirm_"):
         try:
@@ -1175,8 +1591,7 @@ def callback_handler(call):
         except Exception:
             return
         if user["balance"] < amount:
-            bot.answer_callback_query(call.id, "❌ Недостаточно средств!",
-                                      show_alert=True)
+            bot.answer_callback_query(call.id, "❌ Недостаточно средств!", show_alert=True)
             return
         user["balance"] -= amount
         user["history"].append({
@@ -1187,8 +1602,7 @@ def callback_handler(call):
         withdraw_counter[0] += 1
         req_id     = withdraw_counter[0]
         first_name = esc(call.from_user.first_name or "—")
-        username   = (f"@{esc(call.from_user.username)}"
-                      if call.from_user.username else "—")
+        username   = (f"@{esc(call.from_user.username)}" if call.from_user.username else "—")
         withdraw_requests[req_id] = {
             "user_id":    uid,
             "amount":     amount,
@@ -1198,16 +1612,12 @@ def callback_handler(call):
         }
         edit(
             f"╭─────────────────────\n"
-            f'├ <b><tg-emoji emoji-id="5258043150110301407">🎟</tg-emoji> '
-            f"Заявка отправлена!</b>\n"
+            f"├ <b>✅ Заявка на вывод отправлена!</b>\n"
             f"├\n"
-            f'├ <tg-emoji emoji-id="5890848474563352982">🎟</tg-emoji> '
-            f"Сумма: <b>${amount:.2f} USDT</b>\n"
-            f'├ <tg-emoji emoji-id="6030537810509828330">🎟</tg-emoji> '
-            f"Номер заявки: <b>#{req_id}</b>\n"
+            f"├ Сумма: <b>${amount:.2f} USDT</b>\n"
+            f"├ Номер заявки: <b>#{req_id}</b>\n"
             f"├\n"
             f"├ Ожидайте — администратор обработает\n"
-            f"├ заявку и пришлёт чек CryptoBot\n"
             f"╰─────────────────────",
             back_btn(),
         )
@@ -1234,68 +1644,11 @@ def callback_handler(call):
             return
         _process_withdraw_reject(req_id, chat_id, msg_id)
 
-    # ── Одобрить QR ──
-    elif data.startswith("approve_"):
-        if not is_admin(uid):
-            return
-        target_id = int(data.split("_")[1])
-        u = get_user(target_id)
-        u["balance"]        += settings["payout"]
-        u["numbers_rented"] += 1
-        u["history"].append({
-            "date":   datetime.date.today().strftime("%d.%m"),
-            "amount": settings["payout"],
-            "status": "Одобрено",
-        })
-
-        _finish_qr_review(target_id)   # → в конец очереди
-
-        try:
-            bot.send_message(
-                target_id,
-                f"╭─────────────────────\n"
-                f'├ <b><tg-emoji emoji-id="5258215846450305872">🎟</tg-emoji> '
-                f"Заявка принята!</b>\n"
-                f"├\n"
-                f'├ <tg-emoji emoji-id="5890848474563352982">🎟</tg-emoji> '
-                f'Начислено: <b>${settings["payout"]:.2f}</b>\n'
-                f'├ <tg-emoji emoji-id="5258204546391351475">🎟</tg-emoji> '
-                f'Ваш баланс: <b>${u["balance"]:.2f}</b>\n'
-                f"├\n"
-                f"├ Вы добавлены в конец очереди.\n"
-                f"╰─────────────────────",
-                parse_mode="HTML",
-            )
-        except Exception:
-            pass
-        try:
-            bot.edit_message_caption(
-                caption=call.message.caption
-                        + f"\n\n✅ <b>ПРИНЯТО</b> — начислено ${settings['payout']:.2f}",
-                chat_id=chat_id, message_id=msg_id, parse_mode="HTML",
-            )
-        except Exception:
-            pass
-
-    # ── Отклонить QR (запрос причины) ──
-    elif data.startswith("reject_"):
-        if not is_admin(uid):
-            return
-        target_id             = int(data.split("_")[1])
-        admin_states[uid]     = {"action": "reject_reason", "target": target_id}
-        try:
-            bot.edit_message_caption(
-                caption=call.message.caption
-                        + "\n\n❌ <b>Отклоняется...</b>\nВведите причину отказа:",
-                chat_id=chat_id, message_id=msg_id, parse_mode="HTML",
-            )
-        except Exception:
-            bot.send_message(chat_id, "✏️ Введите причину отказа:")
-
     # ── Статистика (общая) ──
     elif data == "adm_stats":
         if not is_admin(uid):
             return
+        work_status = "🟢 Активен" if work_session["active"] else "🔴 Выключен"
         bot.send_message(
             chat_id,
             f"╭─────────────────────\n"
@@ -1307,12 +1660,12 @@ def callback_handler(call):
             f"├ 🔄 В очереди: <b>{len(queue)}</b>\n"
             f"├ ⏳ На проверке: <b>{len(pending)}</b>\n"
             f"├ 💵 Выплата: <b>${settings['payout']:.2f}</b>\n"
-            f"├ 👑 Администраторов: <b>{len(ADMIN_IDS)}</b>\n"
+            f"├ ⚙️ Ворк: {work_status}\n"
+            f"├ 📋 В сессии: <b>{len(work_session['entries'])}</b> номеров\n"
             f"╰─────────────────────",
             parse_mode="HTML",
         )
 
-    # ── Топ-20 пользователей ──
     elif data == "adm_top_stats":
         if not is_admin(uid):
             return
@@ -1358,8 +1711,7 @@ def callback_handler(call):
                 "status": "Обнуление",
             })
         try:
-            bot.edit_message_text("✅ Балансы всех пользователей обнулены.",
-                                  chat_id, msg_id)
+            bot.edit_message_text("✅ Балансы всех пользователей обнулены.", chat_id, msg_id)
         except Exception:
             bot.send_message(chat_id, "✅ Балансы всех пользователей обнулены.")
 
@@ -1390,27 +1742,114 @@ def callback_handler(call):
     elif data.startswith("adm_ban_"):
         if not is_admin(uid):
             return
-        target_id      = int(data.split("_")[2])
-        u              = get_user(target_id)
-        u["banned"]    = not u.get("banned", False)
-        status         = "🚫 Заблокирован" if u["banned"] else "✅ Разблокирован"
-        bot.send_message(chat_id,
-                         f"{status}: <code>{target_id}</code>",
-                         parse_mode="HTML")
+        target_id   = int(data.split("_")[2])
+        u           = get_user(target_id)
+        u["banned"] = not u.get("banned", False)
+        status      = "🚫 Заблокирован" if u["banned"] else "✅ Разблокирован"
+        bot.send_message(chat_id, f"{status}: <code>{target_id}</code>", parse_mode="HTML")
         try:
             bot.send_message(
                 target_id,
-                "🚫 Вы заблокированы администратором."
-                if u["banned"]
-                else "✅ Ваш аккаунт разблокирован.",
+                "🚫 Вы заблокированы администратором." if u["banned"] else "✅ Ваш аккаунт разблокирован.",
             )
         except Exception:
             pass
 
 
 # ══════════════════════════════════════════════════════
+#  Вспомогательная: клавиатура ворк-списка
+# ══════════════════════════════════════════════════════
+def _build_work_list_markup():
+    """Кнопки Отстоял/Не отстоял для каждой необработанной записи."""
+    m = InlineKeyboardMarkup()
+    for idx, e in enumerate(work_session["entries"]):
+        if e["result"] in (None,):
+            label = f"{esc(e['phone'])} [{('QR' if e['format']=='qr' else 'КОД')}]"
+            m.row(
+                InlineKeyboardButton(f"✅ {label}", callback_data=f"ws_stood_{idx}"),
+                InlineKeyboardButton(f"❌ {label}", callback_data=f"ws_not_{idx}"),
+            )
+    return m if work_session["entries"] else None
+
+
+# ══════════════════════════════════════════════════════
+#  Вспомогательная: КОД-заявка (без фото)
+# ══════════════════════════════════════════════════════
+def _submit_kod_entry(uid, chat_id, msg_id, phone, call):
+    """Оформить заявку по формату КОД (без QR-фото)."""
+    if uid in queue:
+        queue.remove(uid)
+
+    pending[uid] = msg_id
+
+    entry = {
+        "user_id": uid,
+        "phone":   phone,
+        "format":  "kod",
+        "ts":      datetime.datetime.now(),
+        "result":  None,
+    }
+    work_session["entries"].append(entry)
+
+    name     = esc(call.from_user.first_name or "—")
+    username = f"@{esc(call.from_user.username)}" if call.from_user.username else "—"
+    admin_text = (
+        f"╭─────────────────────\n"
+        f"├ <b>🔢 Новая КОД-заявка</b>\n"
+        f"├\n"
+        f"├ Имя: {name}\n"
+        f"├ Username: {username}\n"
+        f"├ ID: <code>{uid}</code>\n"
+        f"├ Номер: <code>{esc(phone)}</code>\n"
+        f"├ Дата: {datetime.date.today().strftime('%d.%m.%Y')}\n"
+        f"├ Выплата: <b>${settings['payout']:.2f}</b>\n"
+        f"╰─────────────────────"
+    )
+
+    sent = notify_all_admins(
+        text=admin_text,
+        markup=admin_review_kod_btn(uid),
+    )
+    pending_admin_msgs[uid] = sent
+
+    try:
+        if call.message.photo:
+            bot.edit_message_caption(
+                caption=(
+                    f"╭─────────────────────\n"
+                    f"├ <b>✅ КОД-заявка отправлена!</b>\n"
+                    f"├\n"
+                    f"├ Номер: <code>{esc(phone)}</code>\n"
+                    f"├ Ожидайте решения администратора.\n"
+                    f"╰─────────────────────"
+                ),
+                chat_id=chat_id, message_id=msg_id,
+                parse_mode="HTML", reply_markup=pending_menu(),
+            )
+        else:
+            bot.edit_message_text(
+                f"╭─────────────────────\n"
+                f"├ <b>✅ КОД-заявка отправлена!</b>\n"
+                f"├\n"
+                f"├ Номер: <code>{esc(phone)}</code>\n"
+                f"├ Ожидайте решения администратора.\n"
+                f"╰─────────────────────",
+                chat_id, msg_id, parse_mode="HTML", reply_markup=pending_menu(),
+            )
+    except Exception:
+        bot.send_message(
+            chat_id,
+            f"╭─────────────────────\n"
+            f"├ <b>✅ КОД-заявка отправлена!</b>\n"
+            f"├ Номер: <code>{esc(phone)}</code>\n"
+            f"╰─────────────────────",
+            parse_mode="HTML", reply_markup=pending_menu(),
+        )
+
+
+# ══════════════════════════════════════════════════════
 if __name__ == "__main__":
-    print("✅ Бот Аренда MAX запущен...")
+    print("✅ Бот запущен...")
     print(f"   💵 Выплата: ${settings['payout']:.2f}")
     print(f"   👑 Admin IDs: {ADMIN_IDS}")
     bot.infinity_polling()
